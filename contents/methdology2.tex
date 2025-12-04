@@ -32,6 +32,14 @@
 \end{equation}
 每一项误差都除以对应矩阵的 $\|M_{k,l}\|_F^2$、$\|M_{v,l}\|_F^2$，这是为了消除不同层能量尺度差异带来的偏置；若直接比较未归一化的能量，能量更大的层即便尾部奇异值占比极小，也会因为绝对值大而被优先保留，无法实现公平的 rank 分配。
 
+\begin{lemma}[F 范数与奇异值能量]\label{lem:frobenius-sigma}
+设矩阵 $M$ 的 SVD 为 $M=U\Sigma V^\top$，其中奇异值为 $\{\sigma_i\}$。则
+\[
+    \|M\|_F^2 = \sum_i \sigma_i^2.
+\]
+\end{lemma}
+该结论可由引理~\ref{lem:Ftotrace}（$\|M\|_F^2=\operatorname{tr}(M^\top M)$）与 $\Sigma^\top \Sigma = \operatorname{diag}(\sigma_i^2)$ 直接推出。
+
 利用 SVD 的最优性，式 \eqref{eq:opt-init} 的误差可以直接写成奇异值能量。记 $\{\sigma_{k,l,i}\}_{i=1}^{d}$、$\{\sigma_{v,l,i}\}_{i=1}^{d}$ 为对应矩阵的降序奇异值，则其相对能量为
 \begin{equation}
     \label{eq:energy-weight}
