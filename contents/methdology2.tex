@@ -6,7 +6,18 @@
 \section{基于参数低秩性的层间秩初始化}
 低秩降维成立的基本前提是：所分解的目标矩阵本身在能量上呈现显著的低秩特性。我们的对象不是原始的 $W_k/W_v$，而是上一章通过变换矩阵 $S_{k,l}$、$S_{v,l}$ 吸收了激活与注意力统计后的 $M_{k,l}=S_{k,l}W_{k,l}$、$M_{v,l}=S_{v,l}W_{v,l}$。只有当这些矩阵在各自的 SVD 中表现出主奇异值快速衰减时，基于奇异值能量的 rank 初始化和裁剪才有意义。虽然 Key 与 Value 普遍呈现低秩特征，但能量集中程度会随层号与矩阵类别发生明显变化：不少层的 Key 在前几个秩内就累计到 80\% 以上，而同层的 Value 曲线往往更平缓，意味着需要保留更多秩才能达到同等能量。累积能量曲线正好把这种差异量化出来，为“哪些层、哪类矩阵可以优先裁剪尾部秩”提供先验。
 
-跨层 rank 调度可以转写为一个归一化误差最小化问题。设共有 $L$ 个注意力层，每层在 GQA 架构下含有 $G$ 个 KV 组，Key/Value 特征维度统一记作 $d$。我们分别对 $M_{k,l}$ 与 $M_{v,l}$ 做 SVD，并保留 $r_{k,l}$、$r_{v,l}$ 个奇异值。若定义 $M_{k,l}^{(r_{k,l})}$、$M_{v,l}^{(r_{v,l})}$ 为对应的最优秩-$r$ 近似，则初始化阶段希望求解
+设模型共有 $L$ 个注意力层，每层在 GQA 架构下含有 $G$ 个 KV 组，每组的 Key/Value 维度均为 $d$，一次推理写入缓存的序列数为 $N$，缓存长度为 $T$。在不压缩的情况下，单层写入 KV 缓存的体积为
+\begin{equation}
+    \label{eq:kv-cost}
+    \mathcal{C}_l^{\text{KV}} = 2 N \cdot T \cdot G \cdot d,
+\end{equation}
+于是模型所有层合计的 KV 体积是 $\mathcal{C}^{\text{KV}}=\sum_{l=1}^{L}\mathcal{C}_l^{\text{KV}} = 2 N T L G d$。由于变换后的 $M_{k,l}$、$M_{v,l}$ 与其 SVD 中间表示在不裁剪秩时的特征维度一致，都为 $d$，因此在归一化到单个 token-组对之后，$\mathcal{C}^{\text{KV}}/(N T G)=2Ld$ 可视为模型可使用的最大秩总数。若全模型的目标压缩率为 $\rho \in (0,1]$，则所有层保留下来的秩之和必须满足
+\[
+    \sum_{l=1}^{L}\bigl(r_{k,l}+r_{v,l}\bigr) \le \rho \cdot \frac{\mathcal{C}^{\text{KV}}}{N T G}
+    = \rho \cdot 2 L d.
+\]
+
+在这一约束下，跨层 rank 调度可以转写为一个归一化误差最小化问题。设我们对 $M_{k,l}$ 与 $M_{v,l}$ 分别保留 $r_{k,l}$、$r_{v,l}$ 个奇异值，$M_{k,l}^{(r_{k,l})}$、$M_{v,l}^{(r_{v,l})}$ 表示对应的最优秩-$r$ 近似，则初始化阶段希望求解
 \begin{equation}
     \label{eq:opt-init}
     \min_{\{r_{k,l},r_{v,l}\}} \sum_{l=1}^{L}
@@ -19,7 +30,7 @@
 \begin{equation}
     \label{eq:rank-budget}
     \sum_{l=1}^{L} \Bigl[(d-r_{k,l}) + (d-r_{v,l})\Bigr]
-    = (1-\rho)\cdot 2Ld,
+    = (1-\rho)\cdot 2 L d,
 \end{equation}
 其中 $\rho$ 为目标保留比例。约束式意味着所有层被丢弃的 rank 数之和恰好等于 $(1-\rho)$ 倍的模型总 rank。
 
