@@ -13,39 +13,48 @@
 \end{equation}
 于是模型所有层合计的 KV 体积是 $\mathcal{C}^{\text{KV}} = 2 N T L G d$。由于经过 $S_{k,l}$、$S_{v,l}$ 变换后的 Key/Value 与其 SVD 中间表示在不裁剪秩时的特征维度仍为 $d$，我们可以把 $\mathcal{C}^{\text{KV}}/(N T G)=2Ld$ 视为“单个 token-组对能使用的最大秩数”。若目标压缩率为 $\rho\in(0,1]$，则各层保留的秩必须满足
 \[
-    \sum_{l=1}^{L} r_l \le \rho \cdot \frac{\mathcal{C}^{\text{KV}}}{N T G} = \rho \cdot 2 L d.
+    \sum_{l=1}^{L} \bigl(r_{k,l}+r_{v,l}\bigr) \le \rho \cdot \frac{\mathcal{C}^{\text{KV}}}{N T G} = \rho \cdot 2 L d.
 \]
 
-在这一约束下，初始化的 rank 调度可表述为一个归一化重建误差最小化问题。记 $M_l=[M_{k,l},M_{v,l}] \in \mathbb{R}^{d\times 2d}$ 为第 $l$ 层 Key/Value 目标的拼接矩阵，$M_l^{(r_l)}$ 是其最优秩-$r_l$ 近似。我们希望求解
+在这一约束下，初始化的 rank 调度可表述为一个归一化重建误差最小化问题。我们分别对第 $l$ 层的 Key/Value 分解目标保留 $r_{k,l}$、$r_{v,l}$ 个奇异值，最优秩-$r$ 近似记作 $M_{k,l}^{(r_{k,l})}$、$M_{v,l}^{(r_{v,l})}$，需要求解
 \begin{equation}
     \label{eq:opt-init}
-    \min_{\{r_l\}} \sum_{l=1}^{L}
-        \frac{\bigl\|M_l - M_l^{(r_l)}\bigr\|_F^2}{\|M_l\|_F^2},
+    \min_{\{r_{k,l}, r_{v,l}\}} \sum_{l=1}^{L}
+        \left[
+            \frac{\bigl\|M_{k,l} - M_{k,l}^{(r_{k,l})}\bigr\|_F^2}{\|M_{k,l}\|_F^2}
+          + \frac{\bigl\|M_{v,l} - M_{v,l}^{(r_{v,l})}\bigr\|_F^2}{\|M_{v,l}\|_F^2}
+        \right],
 \end{equation}
 使得
 \begin{equation}
     \label{eq:rank-budget}
-    \sum_{l=1}^{L} (2d - r_l) = (1-\rho)\cdot 2 L d.
+    \sum_{l=1}^{L} \Bigl[(d - r_{k,l}) + (d - r_{v,l})\Bigr] = (1-\rho)\cdot 2 L d.
 \end{equation}
-每一项误差都除以 $\|M_l\|_F^2$，是为了抵消不同层能量尺度差异带来的偏置；如果省略归一化，能量较大的层即便尾部奇异值占比很小，也会因为绝对值大而被优先保留，无法实现公平的 rank 分配。
+每一项误差都除以对应矩阵的 $\|M_{k,l}\|_F^2$、$\|M_{v,l}\|_F^2$，这是为了消除不同层能量尺度差异带来的偏置；若直接比较未归一化的能量，能量更大的层即便尾部奇异值占比极小，也会因为绝对值大而被优先保留，无法实现公平的 rank 分配。
 
-利用 SVD 的最优性，式 \eqref{eq:opt-init} 中的误差可直接换成奇异值能量。记 $\{\sigma_{l,i}\}_{i=1}^{2d}$ 为 $M_l$ 的降序奇异值，则
+利用 SVD 的最优性，式 \eqref{eq:opt-init} 的误差可以直接写成奇异值能量。记 $\{\sigma_{k,l,i}\}_{i=1}^{d}$、$\{\sigma_{v,l,i}\}_{i=1}^{d}$ 为对应矩阵的降序奇异值，则其相对能量为
 \begin{equation}
     \label{eq:energy-weight}
-    w_{l,i} = \frac{\sigma_{l,i}^2}{\sum_{j=1}^{2d} \sigma_{l,j}^2}, \qquad
-    \sum_{i=1}^{2d} w_{l,i} = 1,
+    w_{k,l,i} = \frac{\sigma_{k,l,i}^2}{\sum_{j=1}^{d} \sigma_{k,l,j}^2}, \qquad
+    w_{v,l,i} = \frac{\sigma_{v,l,i}^2}{\sum_{j=1}^{d} \sigma_{v,l,j}^2},
 \end{equation}
-并且
+并满足 $\sum_i w_{k,l,i} = \sum_i w_{v,l,i} = 1$。于是
 \[
-    \frac{\bigl\|M_l - M_l^{(r_l)}\bigr\|_F^2}{\|M_l\|_F^2}
-    = \sum_{i=r_l+1}^{2d} w_{l,i}.
+    \frac{\bigl\|M_{k,l} - M_{k,l}^{(r_{k,l})}\bigr\|_F^2}{\|M_{k,l}\|_F^2}
+    = \sum_{i=r_{k,l}+1}^{d} w_{k,l,i}, \qquad
+    \frac{\bigl\|M_{v,l} - M_{v,l}^{(r_{v,l})}\bigr\|_F^2}{\|M_{v,l}\|_F^2}
+    = \sum_{i=r_{v,l}+1}^{d} w_{v,l,i}.
 \]
 因此，问题 \eqref{eq:opt-init} 等价于在约束 \eqref{eq:rank-budget} 下最大化被保留下来的奇异值能量：
 \begin{equation}
     \label{eq:max-energy}
-    \max_{\{r_l\}} \sum_{l=1}^{L} \sum_{i=1}^{r_l} w_{l,i}
+    \max_{\{r_{k,l}, r_{v,l}\}} \sum_{l=1}^{L}
+    \left(
+        \sum_{i=1}^{r_{k,l}} w_{k,l,i}
+      + \sum_{i=1}^{r_{v,l}} w_{v,l,i}
+    \right)
     \quad \text{s.t. } \eqref{eq:rank-budget}.
 \end{equation}
-直观地，这意味着初始化时应优先保留所有层（Key/Value 拼接后）中能量占比最高的秩，把能量最小的奇异值视为裁剪候选，直到总共丢弃 $(1-\rho)$ 的秩。
+直观地，这意味着初始化时应优先保留 Key/Value 各自能量占比最高的秩，把能量最小的奇异值视为裁剪候选，直到总共丢弃 $(1-\rho)$ 的秩。
 
-实际实现时无需显式求解 \eqref{eq:max-energy}。我们只需对每层的 $\{w_{l,i}\}$ 按降序排序，然后从尾部开始删除奇异值，累积删除量达到 $(1-\rho)\cdot 2Ld$ 即可。这等价于对“所有奇异值能量”做一次全局 top-$\rho$ 选择，既满足全局 rank 预算，又把不同层、不同类型矩阵的低秩差异自然地反映到初始秩上。下一节将在此基础上进一步考虑层间误差传递约束，对这些初值做细化。*** End Patch
+实际实现时无需显式求解 \eqref{eq:max-energy}。我们把所有 $w_{k,l,i}$、$w_{v,l,i}$ 置于同一候选集合（它们已通过各自的 $\|M\|_F^2$ 归一化，可以直接比较），按照能量从小到大依次丢弃奇异值，直至累计删除秩达到 $(1-\rho)\cdot 2Ld$。这等价于对“所有 Key/Value 奇异值能量”做一次全局 top-$\rho$ 选择：能量越大的秩越早被保留，能量最小的秩优先被裁剪。由此得到的 $\{r_{k,l}^{(0)}, r_{v,l}^{(0)}\}$ 既满足全局 rank 预算，又把层间以及 K/V 之间的低秩差异自然映射到初始配额，为下一节的误差传递与敏感性调控迭代提供扎实起点。*** End Patch
