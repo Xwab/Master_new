@@ -6,39 +6,46 @@
 \section{基于参数低秩性的层间秩初始化}
 低秩降维成立的基本前提是：所分解的目标矩阵本身在能量上呈现显著的低秩特性。我们的对象不是原始的 $W_k/W_v$，而是上一章通过变换矩阵 $S_{k,l}$、$S_{v,l}$ 吸收了激活与注意力统计后的 $M_{k,l}=S_{k,l}W_{k,l}$、$M_{v,l}=S_{v,l}W_{v,l}$。只有当这些矩阵在各自的 SVD 中表现出主奇异值快速衰减时，基于奇异值能量的 rank 初始化和裁剪才有意义。虽然 Key 与 Value 普遍呈现低秩特征，但能量集中程度会随层号与矩阵类别发生明显变化：不少层的 Key 在前几个秩内就累计到 80\% 以上，而同层的 Value 曲线往往更平缓，意味着需要保留更多秩才能达到同等能量。累积能量曲线正好把这种差异量化出来，为“哪些层、哪类矩阵可以优先裁剪尾部秩”提供先验。
 
-跨层 rank 调度的起点是弄清楚各层原始的 KV 规模。设模型共有 $L$ 个注意力层，第 $l$ 层在 GQA 架构下含有 $G_l$ 个 KV 组，Key 与 Value 的特征维度统一记作 $d$，推理缓存长度为 $T$。不压缩时写入 KV 缓存的体积是
+跨层 rank 调度可以转写为一个归一化误差最小化问题。设共有 $L$ 个注意力层，第 $l$ 层在 GQA 架构下含有 $G_l$ 个 KV 组，Key/Value 特征维度统一记作 $d$。我们分别对 $M_{k,l}$ 与 $M_{v,l}$ 做 SVD，并保留 $r_{k,l}$、$r_{v,l}$ 个奇异值。若定义 $M_{k,l}^{(r_{k,l})}$、$M_{v,l}^{(r_{v,l})}$ 为对应的最优秩-$r$ 近似，则初始化阶段希望求解
 \begin{equation}
-    \label{eq:kv-cost}
-    \mathcal{C}_l^{\text{KV}} = T \cdot G_l \cdot 2 d,
+    \label{eq:opt-init}
+    \min_{\{r_{k,l},r_{v,l}\}} \sum_{l=1}^{L}
+    \left(
+        \frac{\bigl\|M_{k,l}-M_{k,l}^{(r_{k,l})}\bigr\|_F^2}{\|M_{k,l}\|_F^2}
+      + \frac{\bigl\|M_{v,l}-M_{v,l}^{(r_{v,l})}\bigr\|_F^2}{\|M_{v,l}\|_F^2}
+    \right),
 \end{equation}
-也是该层可使用的最大 rank。若全模型目标压缩率为 $\rho \in (0,1]$，则剩余的 rank 总量需满足 $\sum_l \bigl(r_{k,l}+r_{v,l}\bigr) \approx \rho \sum_l 2 d$。
+使得丢弃的总秩满足
+\begin{equation}
+    \label{eq:rank-budget}
+    \sum_{l=1}^{L} \Bigl[(d-r_{k,l}) + (d-r_{v,l})\Bigr]
+    = (1-\rho)\sum_{l=1}^{L} 2d,
+\end{equation}
+其中 $\rho$ 为目标保留比例。约束式意味着所有层被丢弃的 rank 数之和恰好等于 $(1-\rho)$ 倍的模型总 rank。
 
-为了在这个约束下给每层的 Key/Value 分配初值，我们分别对 $M_{k,l}$ 与 $M_{v,l}$ 做 SVD。记其奇异值为 $\{\sigma_{k,l,i}\}_{i=1}^{d}$、$\{\sigma_{v,l,i}\}_{i=1}^{d}$。第 $i$ 个秩的相对能量占比分别为
+由于 SVD 的最优性，式 \eqref{eq:opt-init} 中的归一化误差可以直接用奇异值能量表示。记 $\{\sigma_{k,l,i}\}_{i=1}^{d}$、$\{\sigma_{v,l,i}\}_{i=1}^{d}$ 为降序排列的奇异值，则有
 \begin{equation}
     \label{eq:energy-weight-kv}
     w_{k,l,i} = \frac{\sigma_{k,l,i}^2}{\sum_{j=1}^{d} \sigma_{k,l,j}^2},\qquad
     w_{v,l,i} = \frac{\sigma_{v,l,i}^2}{\sum_{j=1}^{d} \sigma_{v,l,j}^2},
 \end{equation}
-并满足 $\sum_i w_{k,l,i} = \sum_i w_{v,l,i} = 1$。这些权重刻画了删除对应秩会损失的相对能量。
+并满足 $\sum_i w_{k,l,i} = \sum_i w_{v,l,i} = 1$。则
+\[
+    \frac{\bigl\|M_{k,l}-M_{k,l}^{(r_{k,l})}\bigr\|_F^2}{\|M_{k,l}\|_F^2}
+    = \sum_{i=r_{k,l}+1}^{d} w_{k,l,i}, \qquad
+    \frac{\bigl\|M_{v,l}-M_{v,l}^{(r_{v,l})}\bigr\|_F^2}{\|M_{v,l}\|_F^2}
+    = \sum_{i=r_{v,l}+1}^{d} w_{v,l,i}.
+\]
+因此，优化问题 \eqref{eq:opt-init} 等价于在约束 \eqref{eq:rank-budget} 下最大化各层被保留下来的奇异值能量之和：
+\begin{equation}
+    \max_{\{r_{k,l},r_{v,l}\}} \sum_{l=1}^{L}
+    \left(
+        \sum_{i=1}^{r_{k,l}} w_{k,l,i}
+      + \sum_{i=1}^{r_{v,l}} w_{v,l,i}
+    \right)
+    \quad \text{s.t. } \eqref{eq:rank-budget}.
+    \label{eq:max-energy}
+\end{equation}
+这表明：初始化时的最优策略就是优先保留所有 Key/Value 矩阵中能量占比最高的秩，把能量最小的奇异值作为候选裁剪对象，直到总共丢弃 $(1-\rho)$ 的秩。
 
-随后根据 Key 与 Value 在缓存中的占比分配各自的“保留能量份额”。定义
-\begin{equation}
-    C_{k,l}=T \cdot G_l \cdot d,\qquad
-    C_{v,l}=T \cdot G_l \cdot d,\qquad
-    C_{\text{tot}}=\sum_{j=1}^{L}(C_{k,j}+C_{v,j}),
-\end{equation}
-并令
-\begin{equation}
-    \label{eq:energy-budget-sep}
-    \beta_{k,l}=\frac{C_{k,l}}{C_{\text{tot}}},\qquad
-    \beta_{v,l}=\frac{C_{v,l}}{C_{\text{tot}}},\qquad
-    \mathcal{E}_{k,l}^{\text{keep}}=\rho \cdot \beta_{k,l},\qquad
-    \mathcal{E}_{v,l}^{\text{keep}}=\rho \cdot \beta_{v,l}.
-\end{equation}
-也就是说，Key/Value 规模越大的层，会被分配更高的保留能量阈值。把 $w_{k,l,i}$、$w_{v,l,i}$ 按降序排列之后，分别找到最小的 $r_{k,l}^{(0)}$、$r_{v,l}^{(0)}$ 使得
-\begin{equation}
-    \label{eq:init-rank-kv}
-    \sum_{i=1}^{r_{k,l}^{(0)}} w_{k,l,i} \ge \mathcal{E}_{k,l}^{\text{keep}},\qquad
-    \sum_{i=1}^{r_{v,l}^{(0)}} w_{v,l,i} \ge \mathcal{E}_{v,l}^{\text{keep}}.
-\end{equation}
-这样一来，尾部能量占比最小的奇异值自然被列为待裁剪的对象，直到累计丢弃的相对能量达到 $(1-\rho)$。合并所有层后，$\{r_{k,l}^{(0)},r_{v,l}^{(0)}\}$ 既满足全局压缩率要求，又忠实反映了 Key 与 Value 在不同层的低秩差异，为后续带有误差传递与敏感性调控的贪心迭代提供了扎实的起点。下一节将在此基础上进一步考虑层间误差累积对秩分配的约束。
+实践中我们不需要显式求解 \eqref{eq:max-energy}，而是把式 \eqref{eq:energy-weight-kv} 得到的能量权重按层内降序排序，并从尾部开始依次丢弃奇异值，直到满足约束 \eqref{eq:rank-budget} 为止。这一过程等价于在“所有奇异值能量”集合上执行一次全局的 top-$\rho$ 选择，既保证了全局 rank 预算，又忠实反映了不同层、不同类型矩阵的低秩程度，为后续考虑误差传递和敏感性调控的贪心迭代提供了有针对性的起点。下一节将在此基础上引入层间误差累积约束，对这些初值进一步细化。
