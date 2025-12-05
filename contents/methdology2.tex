@@ -165,3 +165,27 @@
 该贪心策略的开销主要来自两部分：校准前向与秩重分配计算。若校准集包含 $|\mathcal{D}_\text{cal}|$ 个样本，在使用了\ref{sec:dp_for_inference}章节中的动态规划算法后，单次迭代的耗时大约为一次前向模型推理的($L+2$)倍。这是因为对第$i$层，要对当前队列总的所有元素进行计算，次数为$2i$，还需要计算一次$F_{l}(h_{l-1})$，$F_{l,k}(h_{l-1})$和$F_{l,v}(h_{l-1})$，即每层一共需要计算$2i+3$次单层推理。从0层到$L-1$层一共需要计算 $\sum_{i=0}^{L-1}(2i+3)=L^2+2L$，单个模型一共需要进行$L$次层前向，相除之后得到($L+2$)倍。虽然用了动态规划算法，当校准集样本数量较多时迭代过程仍然比较耗时。但我们在实验中发现使用少量样本和用更多的样本相比迭代算法重分配秩之后模型的效果没有明显差异，这是因为每层对秩减少的敏感性以及压缩该层K/V带来的误差累积时模型本身的性质，不会随着样本不同有很大差异。因此我们可以使用少量样本来作为校准集，仍能有较好的效果，我们在实验中通常选择 $|\mathcal{D}_\text{cal}|=128\sim256$。而在每轮迭代中，如寻找压缩K/V导致误差最大和最小的层等其他操作和模型前向相比时间可忽略。
 
 此外，算法中迭代循环的停止标准有两种：\textbf{(i)} 当连续若干次按照算法进行层间K/V秩的重新分配之后压缩后模型的输出与完整模型的输出之间的差异一直不下降，则停止迭代并将最终模型秩分配设定为，压缩后模型与完整模型输出之间差异最小的最近一次层间秩分配方式；\textbf{(ii)}当迭代次数达到预设的最大迭代次数，则停止迭代防止在校准集上过拟合。整个秩重分配算法的伪代码如下：
+
+\begin{center}
+\begin{minipage}{0.96\linewidth}
+\textbf{算法 2：敏感性引导的层间秩重分配}
+
+\textbf{Input:} 目标压缩率 $\rho$；层数 $L$；初始秩 $\{r_{k,l}^{(0)}, r_{v,l}^{(0)}\}$；校准集 $\mathcal{D}_\text{cal}$；动态规划算子 $F_l,F_{l,k},F_{l,v}$；步长学习率 $\eta$；最小/最大步长 $\delta_{\min},\delta_{\max}$；最大迭代次数 $T_{\max}$；允许连续未提升的轮数 $K$\\
+\textbf{Output:} 最优秩 $\{r_{k,l}^\star,r_{v,l}^\star\}$ 及对应压缩输出
+
+\begin{enumerate}
+    \item 初始化：$t\gets0$，$r_{k,l}\gets r_{k,l}^{(0)}$，$r_{v,l}\gets r_{v,l}^{(0)}$；记录当前配置的总误差 $\mathcal{E}_{\text{best}}$，设无提升计数 $c\gets0$，最优秩 $\{r_{k,l}^\star,r_{v,l}^\star\}\gets\{r_{k,l},r_{v,l}\}$。
+    \item \textbf{while} $t<T_{\max}$ \textbf{and} $c<K$ \textbf{do}
+    \begin{enumerate}
+        \item 对 $\mathcal{D}_\text{cal}$ 的每个样本运行算法~1，得到压缩输出 $y$ 及 $\{y^{(k,l)},y^{(v,l)}\}$，并计算 $L2_{l,k}$、$L2_{l,v}$ 以及全局平均误差 $\overline{\Delta}$。
+        \item 依据当前秩计算 $g_{k,l},g_{v,l}$ 与归一化敏感性 $\alpha_{k,l},\alpha_{v,l}$。
+        \item 选取 $\ell_{k,\text{max}}=\arg\max_l L2_{l,k}$、$\ell_{k,\text{min}}=\arg\min_l L2_{l,k}$，以及 $\ell_{v,\text{max}},\ell_{v,\text{min}}$。
+        \item 计算步长 $\delta_k=\mathrm{clip}(\eta(\alpha_{\ell_{k,\text{max}}}+\alpha_{\ell_{k,\text{min}}}),\delta_{\min},\delta_{\max})$，$\delta_v$ 同理。
+        \item 更新秩：$r_{\ell_{k,\text{max}}}\gets \min(d, r_{\ell_{k,\text{max}}}+\delta_k)$，$r_{\ell_{k,\text{min}}}\gets \max(1, r_{\ell_{k,\text{min}}}-\delta_k)$；Value 分支同理，必要时对超出预算的秩做微调以保持约束~\eqref{eq:rank-budget}。
+        \item 使用新秩重新在 $\mathcal{D}_\text{cal}$ 上计算压缩模型与完整模型的 L2 误差 $\mathcal{E}$；若 $\mathcal{E}<\mathcal{E}_{\text{best}}$ 则更新 $\mathcal{E}_{\text{best}}$、$\{r_{k,l}^\star,r_{v,l}^\star\}$ 并令 $c\gets0$，否则 $c\gets c+1$。
+        \item $t\gets t+1$。
+    \end{enumerate}
+    \item 返回 $\{r_{k,l}^\star,r_{v,l}^\star\}$ 及对应压缩配置。
+\end{enumerate}
+\end{minipage}
+\end{center}
