@@ -78,22 +78,22 @@
 记第 $l$ 层为 $F_{l}()$，$l_k$ 层和 $l_v$ 层分别为 $F_{l,k}()$ 和 $F_{l,v}()$，第 $l$ 层的输出为 $h_l$，$l_k$ 层和 $l_v$ 层的输出分别为 $h_{l,k}$ 和 $h_{l,v}$。动态规划算法具体做法是：维护一个队列 $\mathcal{Q}$，以第 0 层为例，当样本 $x$ 输入时，分别记录 $F_{0}(x)=h_0$、$F_{0,k}(x)=h_{0,k}$、$F_{0,v}(x)=h_{0,v}$，并将 $h_{0,k}$ 和 $h_{0,v}$ 输入队列 $\mathcal{Q}$ 中。当前向推理进行到第 1 层时，计算压缩了 KV 的输出 $F_{1}(h_0)=h_1$，并将队列中的 $h_{0,k}$ 和 $h_{0,v}$ 依次从队首出队，每有一个出队的元素，就将出队的元素作为输入送入 1 层的 $F_{1}()$ 中，最后计算得到 $F_{1}(h_{0,k})$，$F_{1}(h_{0,v})$，将其作为新的 $h_{0,k}$ 和 $h_{0,v}$ 再从队列尾部入队。除了队列中的元素外，还将上一层的输出 $h_0$ 输入给当前层（即第 1 层）K 和 V 分别不压缩的变体，得到 $h_{1,k}=F_{1,k}(h_0)$，$h_{1,v}=F_{1,v}(h_0)$，并将它们在 $h_{0,k}$ 和 $h_{0,v}$ 之后入队。一般地，对于前向推理到第 $l$ 层时，先计算压缩 KV 的 $l$ 层的输出 $h_l=F_{l}(h_{l-1})$；此时队列中的元素为 $\bigl[ h_{0,k},h_{0,v},...,h_{l-1,k},h_{l-1,v}\bigr]$，将各组元素（同一层的 KV 看作一组）依次从队首出队，第 $i$ 组元素($0 \le i \le l-1$)为 $h_{i,k}$ 和 $h_{i,v}$，计算 $F_{l}(h_{i,k})$ 和 $F_{l}(h_{i,v})$ 作为新的 $h_{i,k}$ 和 $h_{i,v}$ 再从队尾入队，直到队列中原本的 $l$ 组元素都经过了这样出队->计算->入队的过程。其代表的含义是第 $i$ 层的 K/V 不压缩时，其输出经过第 $l$ 层之后的输出；最后还需要计算第 $l$ 层的 K/V 不压缩时的 $h_{l,k}=F_{l,k}(h_{l-1})$ 和 $h_{l,v}=F_{l,v}(h_{l-1})$，并放入队列末尾。当该过程进行到最后一层时，队列中会有 $2L$ 个元素，分别代表模型各个层的 K/V 不压缩，其他层的 K/V 和当前层的 V/K 按照当前秩分配进行压缩的情况下，模型最终的输出。再加上所有层的 KV 都按照当前的秩分配进行压缩得到的输出，我们一共会得到 $2L+1$ 个输出。这个算法避免了用 $2L+1$ 个不同模型都进行一次前向推理带来的更多耗时，得到了与其同样的效果。算法的伪代码如下：
 
 \begin{center}
-\begin{minipage}{0.95\linewidth}
+\begin{minipage}{0.96\linewidth}
 \textbf{算法 1：动态规划式单层解压前向}
 
-\textbf{Input:} 样本 $x$，层数 $L$，映射 $F_l,F_{l,k},F_{l,v}$ \
-\textbf{Output:} $y^{\text{full}}$ 及 $\{y^{(k,l)},y^{(v,l)}\}_{l=0}^{L-1}$
+\textbf{Input:} 样本 $x$；层数 $L$；压缩映射 $F_l$；Key/Value 解压映射 $F_{l,k},F_{l,v}$ \\
+\textbf{Output:} 压缩模型输出 $y^{\text{full}}$ 及 $\{y^{(k,l)},y^{(v,l)}\}_{l=0}^{L-1}$
 
 \begin{enumerate}
-    \item 初始化队列 $\mathcal{Q}$；置 $h_0=F_0(x)$，$h_{0,k}=F_{0,k}(x)$，$h_{0,v}=F_{0,v}(x)$ 并入队。
+    \item 初始化：$\mathcal{Q}\gets\varnothing$；计算 $h_0=F_0(x)$，$h_{0,k}=F_{0,k}(x)$，$h_{0,v}=F_{0,v}(x)$，并将 $(h_{0,k},h_{0,v})$ 入队。
     \item \textbf{for} $l=1$ \textbf{to} $L-1$ \textbf{do}
     \begin{enumerate}
-        \item $h_l \gets F_l(h_{l-1})$。
-        \item \textbf{for each} $(h_{i,k},h_{i,v})\in\mathcal{Q}$ \textbf{do}\\
-        \quad $h_{i,k} \gets F_l(h_{i,k})$，$h_{i,v} \gets F_l(h_{i,v})$，并将更新后的对重新入队。
-        \item $h_{l,k}\gets F_{l,k}(h_{l-1})$，$h_{l,v}\gets F_{l,v}(h_{l-1})$，将 $(h_{l,k},h_{l,v})$ 入队。
+        \item 计算压缩路径输出 $h_l \gets F_l(h_{l-1})$。
+        \item \textbf{for each} $(h_{i,k},h_{i,v})$（按入队顺序）\textbf{do}\\
+        \quad $h_{i,k} \gets F_l(h_{i,k})$，$h_{i,v}\gets F_l(h_{i,v})$，并把更新后的 $(h_{i,k},h_{i,v})$ 重新入队。
+        \item 生成当前层的 Key/Value 解压分支：$h_{l,k}=F_{l,k}(h_{l-1})$，$h_{l,v}=F_{l,v}(h_{l-1})$，并将 $(h_{l,k},h_{l,v})$ 入队。
     \end{enumerate}
-    \item 返回 $y^{\text{full}}=h_{L-1}$ 以及队列中每对元素经末层映射后的 $\{y^{(k,l)},y^{(v,l)}\}$。
+    \item 结束时令 $y^{\text{full}}=h_{L-1}$；对队列中每对 $(h_{i,k},h_{i,v})$ 执行末层映射得到 $y^{(k,i)}$、$y^{(v,i)}$。
 \end{enumerate}
 \end{minipage}
 \end{center}
