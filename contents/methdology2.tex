@@ -1,1 +1,193 @@
+\chapter{层间动态Rank分配与误差调控}
+\label{chap:dynamic-rank}
+
+上一章我们已经给出了基于激活/注意力重加权的低秩分解算法，能够在每一层内部找到与真实推理目标 $XW_k$、$A X W_v$ 最匹配的主奇异子空间。本章的方法第二部分在此基础上进一步回答“每一层应该保留多少秩”这一跨层问题：我们不再为所有层设定统一的压缩率，而是同时建模（1）分解目标自身的低秩性，刻画该层在联合 SVD 下主能量的集中程度，并用作 rank 初始化的先验；（2）对丢弃秩的敏感性，评估 Key/Value 在注意力反馈中的梯度放大与残差重建难度，用于指导跨层 rank 传递时的步长；（3）多层串联时低秩近似误差的累积风险，确保深层段的近似误差不会在长链路 KV 缓存里失控，并在不同层之间传递 rank 配额时提供约束信号。通过将这三类指标归一化为层级打分，并在全模型 rank 预算约束下运行一个逐步迭代的贪心分配过程，我们可以为每一层分配自适应的秩上限，保证激活/注意力感知的分解结果有足够的表达度，同时把全局误差保持在推理精度可接受的范围。接下来将从指标构建、分配算法与训练/推理期间的更新策略三个角度展开层间 rank 分配的具体流程。
+
+\section{基于参数低秩性的层间秩初始化}
+低秩降维成立的基本前提是：所分解的目标矩阵本身在能量上呈现显著的低秩特性。我们的对象不是原始的 $W_k/W_v$，而是上一章通过变换矩阵 $S_{k,l}$、$S_{v,l}$ 吸收了激活与注意力统计后的 $M_{k,l}=S_{k,l}W_{k,l}$、$M_{v,l}=S_{v,l}W_{v,l}$。只有当这些矩阵在各自的 SVD 中表现出主奇异值快速衰减时，基于奇异值能量的 rank 初始化和裁剪才有意义。虽然 Key 与 Value 普遍呈现低秩特征，但能量集中程度会随层号与矩阵类别发生明显变化：不少层的 Key 在前几个秩内就累计到 80\% 以上，而同层的 Value 曲线往往更平缓，意味着需要保留更多秩才能达到同等能量。累积能量曲线正好把这种差异量化出来，为“哪些层、哪类矩阵可以优先裁剪尾部秩”提供先验。
+
+设模型共有 $L$ 个注意力层，每层在 GQA 架构下含有 $G$ 个 KV 组，每组 Key/Value 维度均为 $d$，一次推理写入缓存的序列数为 $N$，缓存长度为 $T$。在不压缩的情况下，单层写入 KV 缓存的体积为
+\begin{equation}
+    \label{eq:kv-cost}
+    \mathcal{C}_l^{\text{KV}} = 2 N \cdot T \cdot G \cdot d,
+\end{equation}
+于是模型所有层合计的 KV 体积是 $\mathcal{C}^{\text{KV}} = 2 N T L G d$。由于经过 $S_{k,l}$、$S_{v,l}$ 变换后的 Key/Value 与其 SVD 中间表示在不裁剪秩时的特征维度仍为 $d$，我们可以把 $\mathcal{C}^{\text{KV}}/(N T G)=2Ld$ 视为“单个 token-组对能使用的最大秩数”。若目标压缩率为 $\rho\in(0,1]$，则各层保留的秩必须满足
+\[
+    \sum_{l=1}^{L} \bigl(r_{k,l}+r_{v,l}\bigr) \le \rho \cdot \frac{\mathcal{C}^{\text{KV}}}{N T G} = \rho \cdot 2 L d.
+\]
+
+在这一约束下，初始化的 rank 调度可表述为一个归一化重建误差最小化问题。我们分别对第 $l$ 层的 Key/Value 分解目标保留 $r_{k,l}$、$r_{v,l}$ 个奇异值，最优秩-$r$ 近似记作 $M_{k,l}^{(r_{k,l})}$、$M_{v,l}^{(r_{v,l})}$，需要求解
+\begin{equation}
+    \label{eq:opt-init}
+    \min_{\{r_{k,l}, r_{v,l}\}} \sum_{l=1}^{L}
+        \left[
+            \frac{\bigl\|M_{k,l} - M_{k,l}^{(r_{k,l})}\bigr\|_F^2}{\|M_{k,l}\|_F^2}
+          + \frac{\bigl\|M_{v,l} - M_{v,l}^{(r_{v,l})}\bigr\|_F^2}{\|M_{v,l}\|_F^2}
+        \right],
+\end{equation}
+使得
+\begin{equation}
+    \label{eq:rank-budget}
+    \sum_{l=1}^{L} \Bigl[(d - r_{k,l}) + (d - r_{v,l})\Bigr] = (1-\rho)\cdot 2 L d.
+\end{equation}
+每一项误差都除以对应矩阵的 $\|M_{k,l}\|_F^2$、$\|M_{v,l}\|_F^2$，这是为了消除不同层能量尺度差异带来的偏置；若直接比较未归一化的能量，能量更大的层即便尾部奇异值占比极小，也会因为绝对值大而被优先保留，无法实现公平的 rank 分配。
+
+\begin{lemma}[F 范数与奇异值能量]\label{lem:frobenius-sigma}
+设矩阵 $M$ 的 SVD 为 $M=U\Sigma V^\top$，其中奇异值为 $\{\sigma_i\}$。则
+\[
+    \|M\|_F^2 = \sum_i \sigma_i^2.
+\]
+\end{lemma}
+该结论可由引理~\ref{lem:Ftotrace}（$\|M\|_F^2=\operatorname{tr}(M^\top M)$）与 $\Sigma^\top \Sigma = \operatorname{diag}(\sigma_i^2)$ 直接推出。
+
+利用 SVD 的最优性，式 \eqref{eq:opt-init} 的误差可以直接写成奇异值能量。记 $\{\sigma_{k,l,i}\}_{i=1}^{d}$、$\{\sigma_{v,l,i}\}_{i=1}^{d}$ 为对应矩阵的降序奇异值，则其相对能量为
+\begin{equation}
+    \label{eq:energy-weight}
+    w_{k,l,i} = \frac{\sigma_{k,l,i}^2}{\sum_{j=1}^{d} \sigma_{k,l,j}^2}, \qquad
+    w_{v,l,i} = \frac{\sigma_{v,l,i}^2}{\sum_{j=1}^{d} \sigma_{v,l,j}^2},
+\end{equation}
+并满足 $\sum_i w_{k,l,i} = \sum_i w_{v,l,i} = 1$。于是
+\[
+    \frac{\bigl\|M_{k,l} - M_{k,l}^{(r_{k,l})}\bigr\|_F^2}{\|M_{k,l}\|_F^2}
+    = \sum_{i=r_{k,l}+1}^{d} w_{k,l,i}, \qquad
+    \frac{\bigl\|M_{v,l} - M_{v,l}^{(r_{v,l})}\bigr\|_F^2}{\|M_{v,l}\|_F^2}
+    = \sum_{i=r_{v,l}+1}^{d} w_{v,l,i}.
+\]
+因此，问题 \eqref{eq:opt-init} 等价于在约束 \eqref{eq:rank-budget} 下最大化被保留下来的奇异值能量：
+\begin{equation}
+    \label{eq:max-energy}
+    \max_{\{r_{k,l}, r_{v,l}\}} \sum_{l=1}^{L}
+    \left(
+        \sum_{i=1}^{r_{k,l}} w_{k,l,i}
+      + \sum_{i=1}^{r_{v,l}} w_{v,l,i}
+    \right)
+    \quad \text{s.t. } \eqref{eq:rank-budget}.
+\end{equation}
+直观地，这意味着初始化时应优先保留 Key/Value 各自能量占比最高的秩，把能量最小的奇异值视为裁剪候选，直到总共丢弃 $(1-\rho)$ 的秩。
+
+实际实现时无需显式求解 \eqref{eq:max-energy}。我们把所有 $w_{k,l,i}$、$w_{v,l,i}$ 置于同一候选集合（它们已通过各自的 $\|M\|_F^2$ 归一化，可以直接比较），按照能量从小到大依次丢弃奇异值，直至累计删除秩达到 $(1-\rho)\cdot 2Ld$。这等价于对“所有 Key/Value 奇异值能量”做一次全局 top-$\rho$ 选择：能量越大的秩越早被保留，能量最小的秩优先被裁剪。由此得到的 $\{r_{k,l}^{(0)}, r_{v,l}^{(0)}\}$ 既满足全局 rank 预算，又把层间以及 K/V 之间的低秩差异自然映射到初始配额，为下一节的误差传递与敏感性调控迭代提供扎实起点。
+
+\section{基于误差累积与敏感性的层间秩重分配}
+初始化得到的 $\{r_{k,l}^{(0)}, r_{v,l}^{(0)}\}$ 默认为各层误差彼此独立。为了显式建模压缩误差在深层网络中的传递，我们在一小部分校准集 $\mathcal{D}_\text{cal}$ 上对“压缩 vs.~不压缩”的输出差异进行观测，把误差累积和秩敏感性纳入贪心重分配流程。
+
+\subsection{校准集驱动的误差观测}
+上一节通过动态规划式缓存得到了每层“单独解压 Key/Value”与压缩模型输出之间的 L2 误差 $L2_{l,k}$、$L2_{l,v}$。本节直接用这些全局指标驱动秩传递：在每轮迭代里，我们分别挑选 L2 最小的 Key 层与 L2 最大的 Key 层组成一个 donor-receiver 对（Value 层同理），把部分秩从误差最小的层转移给误差最大的层，以优先保障最短板。
+
+为了决定具体的转移步长，我们用 L2 对秩的平均梯度来衡量敏感性。对第 $l$ 层 Key/Value 定义
+\[
+    g_{l,k} = \frac{L2_{l,k}}{d - r_{k,l} + \epsilon},\qquad
+    g_{l,v} = \frac{L2_{l,v}}{d - r_{v,l} + \epsilon},
+\]
+其中 $d$ 为 full rank、$r_{k,l}$、$r_{v,l}$ 为当前秩，$\epsilon$ 防止分母为零。$g$ 越大表示“单位秩变化”对该层误差影响越敏感：对需要减秩的层，敏感度越大意味着只能小幅回收；对需要加秩的层，敏感度越大则说明少量秩就能显著改善误差，同样应给出较小的步长。
+
+具体更新时，我们把 L2 最大的层记为 $u$，L2 最小的层记为 $v$，统一采用
+\[
+    \delta = \eta \left(
+        \frac{d/\overline{L2}}{g_u} + \frac{d/\overline{L2}}{g_v}
+    \right),
+\]
+其中 $\overline{L2}$ 是所有层 L2 的平均值，分子 $d/\overline{L2}$ 起到归一化作用，$\eta$ 为学习率。对 Key 来说，我们执行
+\[
+    r_{k,u} \leftarrow r_{k,u} + \delta,\qquad
+    r_{k,v} \leftarrow r_{k,v} - \delta,
+\]
+Value 分支亦然。这样既保证了 $\sum_l r_{k,l}$、$\sum_l r_{v,l}$ 守恒，又让“误差最大、敏感度适中”的层优先得到增益，而误差极小且对秩不敏感的层会逐步让出更多配额。
+
+\begin{center}
+\begin{minipage}{0.96\linewidth}
+\textbf{算法 1：动态规划式单层解压前向}
+
+\textbf{Input:} 样本 $x$；层数 $L$；压缩映射 $F_l$；Key/Value 解压映射 $F_{l,k},F_{l,v}$ \\
+\textbf{Output:} 压缩模型输出 $y^{\text{full}}$ 及 $\{y^{(k,l)},y^{(v,l)}\}_{l=0}^{L-1}$
+
+\begin{enumerate}
+    \item 初始化：$\mathcal{Q}\gets\varnothing$；计算 $h_0=F_0(x)$，$h_{0,k}=F_{0,k}(x)$，$h_{0,v}=F_{0,v}(x)$，并将 $(h_{0,k},h_{0,v})$ 入队。
+    \item \textbf{for} $l=1$ \textbf{to} $L-1$ \textbf{do}
+    \begin{enumerate}
+        \item 计算压缩路径输出 $h_l \gets F_l(h_{l-1})$。
+        \item \textbf{for each} $(h_{i,k},h_{i,v})$（按入队顺序）\textbf{do}\\
+        \quad $h_{i,k} \gets F_l(h_{i,k})$，$h_{i,v}\gets F_l(h_{i,v})$，并把更新后的 $(h_{i,k},h_{i,v})$ 重新入队。
+        \item 生成当前层的 Key/Value 解压分支：$h_{l,k}=F_{l,k}(h_{l-1})$，$h_{l,v}=F_{l,v}(h_{l-1})$，并将 $(h_{l,k},h_{l,v})$ 入队。
+    \end{enumerate}
+    \item 结束时令 $y^{\text{full}}=h_{L-1}$；对队列中每对 $(h_{i,k},h_{i,v})$ 执行末层映射得到 $y^{(k,i)}$、$y^{(v,i)}$。
+\end{enumerate}
+\end{minipage}
+\end{center}
+
+在得到了 $2L$ 个 $y^{(k,i)}$、$y^{(v,i)}$ 后，我们将它们分别与压缩模型输出 $y$ 计算 L2 距离。记 $L2_{l,k}=\|y-y^{(k,l)}\|_2$、$L2_{l,v}=\|y-y^{(v,l)}\|_2$，它们同时反映了“第 $l$ 层解压 Key/Value”对最终结果的净收益，即压缩该层所带来的局部误差与其在深层中的累积效应之和。为了让评估更具泛化性，我们对校准集中所有样本的 L2 差异求和作为最终指标：若 $\sum_x L2_{l,k}$ 或 $\sum_x L2_{l,v}$ 较大，则说明该层被分配的秩不足，应在后续迭代中补充；若该指标较小，则表示该层可在保证精度的同时继续压缩，并把多余的秩让渡给误差更高的层。
+
+\subsection{关注高注意力词元的 L2 评估}
+注意力矩阵本身具有稀疏性：真正主导各层输出的往往是少量高权重词元。若对所有词元一视同仁地计算 L2，容易让长尾词元的噪声掩盖关键差异。因此我们在统计 $L2_{l,k}$、$L2_{l,v}$ 时仅保留注意力得分排名前 $M$ 的词元（如每个头的 Top-$K$ 或按总注意力质量阈值筛选），并把这些词元在 full 模型与解压分支之间的 L2 作为层级误差。这样既把注意力稀疏性编码进评估过程，又能更准确地捕捉“对模型输出真正重要的 token 上，压缩带来的偏差”。实践中我们对每个头分别选取高关注词元集合 $\mathcal{T}_{l,h}$，然后对 $y$、$y^{(k,l)}$、$y^{(v,l)}$ 在 $\cup_h \mathcal{T}_{l,h}$ 上进行 L2 比较，从而得到更加鲁棒的层级指标。
+
+\subsection{误差驱动与层敏感性调控的秩重分配}
+在当前秩配置下定义平均敏感性
+\begin{equation}
+    g_{k,l}=\frac{\overline{\Delta}_{k,l}}{d-r_{k,l}+\epsilon},\qquad
+    g_{v,l}=\frac{\overline{\Delta}_{v,l}}{d-r_{v,l}+\epsilon},
+\end{equation}
+其中 $\epsilon$ 为极小常数，用于避免分母为零。$g$ 描述了“单位秩变化”在该层上带来的平均 L2 误差，越大说明该层对 rank 调整越敏感。令 $\overline{\Delta}$ 为所有层的平均误差，使用
+\[
+    \alpha_{k,l}=\frac{d/\overline{\Delta}}{g_{k,l}},\qquad
+    \alpha_{v,l}=\frac{d/\overline{\Delta}}{g_{v,l}}
+\]
+对敏感性进行归一化，便于跨层比较。
+
+每轮迭代中，我们选取误差最大的层 $\ell_\text{max}$ 与误差最小、且仍有冗余秩可回收的层 $\ell_\text{min}$，设置步长
+\[
+    \delta = \eta\bigl(\alpha_{\ell_\text{max}}+\alpha_{\ell_\text{min}}\bigr),
+\]
+其中 $\eta$ 为学习率。通过 $r_{\ell_\text{max}}\leftarrow r_{\ell_\text{max}}+\delta$、$r_{\ell_\text{min}}\leftarrow r_{\ell_\text{min}}-\delta$ 完成一次 rank 传递，并在新的秩配置下重新运行校准。为了避免震荡，我们在实践中还会设置最小/最大步长、允许多层并行回收（例如一次从误差排名最靠前的三层补给、从误差排名最低的若干层回收），以及引入指数滑动平均来平滑 $\text{err}$ 序列；若连续 $K$ 轮迭代都未降低“压缩模型 vs.~full 模型”的 L2 误差，则回滚至最佳秩配置并终止。
+
+\subsection{实现细节与复杂度分析}
+该贪心策略的开销主要来自两部分：校准前向与秩重分配计算。若校准集包含 $|\mathcal{D}_\text{cal}|$ 个样本，单轮评估的额外时间大约为一次 full-rank 推理（用于缓存）加一次压缩推理；我们在实验中通常选择 $|\mathcal{D}_\text{cal}|=128\sim256$，并可在不同指令集或不同输入分布上重复采样，以防止某一类样本“绑架”秩分配。秩更新的复杂度接近 $O(L)$，因为我们只需扫描所有层的误差与敏感性即可确定 $\ell_\text{max}$、$\ell_\text{min}$。在多核环境中，校准运行与秩评估也可以管线化：一批层在进行重分配的同时，另一批样本的 full-rank 输出已在后台预计算。
+
+此外，算法 1 中的 “Repeat” 循环可根据应用场景选择不同的收敛准则：\textbf{(i)} 当全局 L2 误差降幅低于某阈值 $\tau$ 时停止；\textbf{(ii)} 当所有层的敏感性 $g_l$ 落在预设区间内（表示无明显“短板”层）时停止；\textbf{(iii)} 当 rank 传递已经导致若干层触及上/下限，需要重新规划预算时停止。这些附加规则有助于在实际系统中控制动态调度对时延的影响。
+
+\subsection{伪代码}
+下列伪代码总结了整个 rank 重分配过程，$r_l$ 可指代 Key 或 Value 的秩向量。
+
+\begin{center}
+\begin{minipage}{0.95\linewidth}
+\textbf{算法 1：误差-敏感性联合驱动的秩重分配}
+\begin{enumerate}
+    \item \textbf{初始化：} 根据上一节的 $\{r_l^{(0)}\}$，在 $\mathcal{D}_\text{cal}$ 上运行一次校准，得到每层的 $\text{err}_l=\overline{\Delta}_l$ 和敏感性 $g_l=\text{err}_l/(d-r_l+\epsilon)$。
+    \item \textbf{Repeat}
+    \begin{enumerate}
+        \item $\ell_\text{max}=\arg\max_l \text{err}_l$，$\ell_\text{min}=\arg\min_l \text{err}_l$。
+        \item 计算 $\alpha_l=(d/\overline{\text{err}})/g_l$，其中 $\overline{\text{err}}$ 为当前所有层误差的均值。
+        \item 设 $\delta=\eta(\alpha_{\ell_\text{max}}+\alpha_{\ell_\text{min}})$，更新 $r_{\ell_\text{max}}\leftarrow r_{\ell_\text{max}}+\delta$、$r_{\ell_\text{min}}\leftarrow r_{\ell_\text{min}}-\delta$，并裁剪到 $0<r_l\le d$。
+        \item 重新运行校准得到新的 $\text{err}_l$、$g_l$；若全局 L2 误差未减小或迭代次数超过 $K$，则恢复上一轮秩配置并终止。
+    \end{enumerate}
+    \item \textbf{Until} 收敛或达到迭代上限。
+\end{enumerate}
+\end{minipage}
+\end{center}
+
+依托“误差观测 + 敏感性调控 + 固定预算”三重约束，该贪心迭代可以在总体秩不变的前提下，把额外的表达能力逐步让渡给误差最大的层，并抑制深层链路中的误差积累。
+
+\subsection{动态规划式输出缓存伪代码}
+为便于复现实验，以下伪代码展示了如何用单次校准前向获得 $2L+1$ 组输出。记 $F_l$ 为第 $l$ 层压缩后的映射，$F_{l,k}$、$F_{l,v}$ 为“仅第 $l$ 层 Key/Value 不压缩”的映射，队列 $\mathcal{Q}$ 维护着各层“解除压缩”分支在当前层的输入。
+
+\begin{center}
+\begin{minipage}{0.95\linewidth}
+\textbf{算法 2：单次校准生成 $2L+1$ 组输出}
+
+\textbf{Input:} 样本 $x$，层数 $L$，映射 $F_l,F_{l,k},F_{l,v}$ \\
+\textbf{Output:} $\bigl\{y^{\text{full}}, y^{(k,l)}, y^{(v,l)}\bigr\}_{l=0}^{L-1}$
+
+\begin{enumerate}
+    \item $\mathcal{Q}\gets\varnothing$；$h_0 \gets F_0(x)$；$h_{0,k}\gets F_{0,k}(x)$，$h_{0,v}\gets F_{0,v}(x)$；将 $h_{0,k},h_{0,v}$ 入队。
+    \item \textbf{for} $l=1$ \textbf{to} $L-1$ \textbf{do}
+    \begin{enumerate}
+        \item $h_l \gets F_l(h_{l-1})$。
+        \item \textbf{for each} $(h_{i,k},h_{i,v})$ \textbf{in} $\mathcal{Q}$（按入队顺序）\textbf{do}\\
+        \quad $h_{i,k} \gets F_l(h_{i,k})$，$h_{i,v}\gets F_l(h_{i,v})$，并将更新后的 $(h_{i,k},h_{i,v})$ 重新入队。
+        \item 计算当前层的未压缩分支：$h_{l,k}\gets F_{l,k}(h_{l-1})$，$h_{l,v}\gets F_{l,v}(h_{l-1})$，并入队 $(h_{l,k},h_{l,v})$。
+    \end{enumerate}
+    \item 最终输出：$y^{\text{full}} = h_{L-1}$；队列中每对 $(h_{i,k},h_{i,v})$ 经过末层映射即可得到 $y^{(k,i)}, y^{(v,i)}$。
+\end{enumerate}
+\end{minipage}
+\end{center}
+
+该流程等价于显式构造 $2L+1$ 个不同的模型并逐一前向，但仅需一次 full-rank/压缩共享的管道，因而能在保证统计精度的同时显著降低校准成本。
 
