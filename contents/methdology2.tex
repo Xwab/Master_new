@@ -124,3 +124,29 @@
 
 依托“误差观测 + 敏感性调控 + 固定预算”三重约束，该贪心迭代可以在总体秩不变的前提下，把额外的表达能力逐步让渡给误差最大的层，并抑制深层链路中的误差积累。
 
+\subsection{动态规划式输出缓存伪代码}
+为便于复现实验，以下伪代码展示了如何用单次校准前向获得 $2L+1$ 组输出。记 $F_l$ 为第 $l$ 层压缩后的映射，$F_{l,k}$、$F_{l,v}$ 为“仅第 $l$ 层 Key/Value 不压缩”的映射，队列 $\mathcal{Q}$ 维护着各层“解除压缩”分支在当前层的输入。
+
+\begin{center}
+\begin{minipage}{0.95\linewidth}
+\textbf{算法 2：单次校准生成 $2L+1$ 组输出}
+
+\textbf{Input:} 样本 $x$，层数 $L$，映射 $F_l,F_{l,k},F_{l,v}$ \\
+\textbf{Output:} $\bigl\{y^{\text{full}}, y^{(k,l)}, y^{(v,l)}\bigr\}_{l=0}^{L-1}$
+
+\begin{enumerate}
+    \item $\mathcal{Q}\gets\varnothing$；$h_0 \gets F_0(x)$；$h_{0,k}\gets F_{0,k}(x)$，$h_{0,v}\gets F_{0,v}(x)$；将 $h_{0,k},h_{0,v}$ 入队。
+    \item \textbf{for} $l=1$ \textbf{to} $L-1$ \textbf{do}
+    \begin{enumerate}
+        \item $h_l \gets F_l(h_{l-1})$。
+        \item \textbf{for each} $(h_{i,k},h_{i,v})$ \textbf{in} $\mathcal{Q}$（按入队顺序）\textbf{do}\\
+        \quad $h_{i,k} \gets F_l(h_{i,k})$，$h_{i,v}\gets F_l(h_{i,v})$，并将更新后的 $(h_{i,k},h_{i,v})$ 重新入队。
+        \item 计算当前层的未压缩分支：$h_{l,k}\gets F_{l,k}(h_{l-1})$，$h_{l,v}\gets F_{l,v}(h_{l-1})$，并入队 $(h_{l,k},h_{l,v})$。
+    \end{enumerate}
+    \item 最终输出：$y^{\text{full}} = h_{L-1}$；队列中每对 $(h_{i,k},h_{i,v})$ 经过末层映射即可得到 $y^{(k,i)}, y^{(v,i)}$。
+\end{enumerate}
+\end{minipage}
+\end{center}
+
+该流程等价于显式构造 $2L+1$ 个不同的模型并逐一前向，但仅需一次 full-rank/压缩共享的管道，因而能在保证统计精度的同时显著降低校准成本。
+
