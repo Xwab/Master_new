@@ -1,2 +1,16 @@
 \chapter{低秩感知的混合精度多粒度量化策略}
 完成层间秩分配只是降低 KV 缓存体积的第一步；若希望进一步压缩，就必须引入低比特量化。然而已有实验（见表~\ref{tab:value-quant-granularity}）表明：当 Key/Value 被粗粒度地统一压到 2-bit 时，模型困惑度急剧上升，而 Value 分支因语义表达更敏感，退化尤为明显，提示我们需要比逐通道更细的量化粒度。其次，一旦把量化与低秩裁剪结合，层与层之间保留的 rank 彼此不同，group-wise 量化的组大小往往无法整除各自的特征维度，导致细粒度量化难以落地。最后，即使解决了粒度问题，我们仍需在不同秩之间区别对待量化精度：低秩分解所暴露的奇异值能量差异意味着重要秩必须维持较高精度，而长尾秩则可采用更低比特。如何在这三重约束下，把“粗/细粒度量化”与“混合精度、低秩感知”协同起来，构成了本章方法的出发点。
+
+\begin{table}[htbp]
+    \centering
+    \caption{不同量化粒度在 2-bit 下的困惑度（Perplexity）对比}
+    \label{tab:value-quant-granularity}
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{量化粒度} & \textbf{WikiText-2} & \textbf{PTB} \\
+        \midrule
+        通道级（channel-wise, 2-bit） & 514.59 & 2665.66 \\
+        分组级（group-wise, 2-bit） & 11.17 & 20.87 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
