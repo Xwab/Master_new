@@ -97,26 +97,32 @@
 
 记第$l$层为$F_{l}()$，$l_k$层和$l_v$层分别为$F_{l,k}()$和$F_{l,v}()$，第$l$层的输出为$h_l$，$l_k$层和$l_v$层的输出分别为$h_{l,k}$和$h_{l,v}$。动态规划算法具体做法是：维护一个队列$\mathcal{Q}$，以第0层为例，当样本$x$输入时，分别记录$F_{0}(x)=h_0$、$F_{0,k}(x)=h_{0,k}$、$F_{0，v}(x)=h_{0,v}$，并将$h_{0,k}$和$h_{0,v}$输入队列$\mathcal{Q}$中。当前向推理进行到第1层时，计算压缩了KV的输出$F_{1}(h_0)=h_1$，并将队列中的$h_{0,k}$和$h_{0,v}$依次从队首出队，每有一个出队的元素，就将出队的元素作为输入送入1层的$F_{1}()$中，最后计算得到$F_{1}(h_{0,k})$，$F_{1}(h_{0,v})$，将其作为新的$h_{0,k}$和$h_{0,v}$再从队列尾部入队。除了队列中的元素外，还将上一层的输出$h_{0}$输入给当前层（即第1层）K和V分别不压缩的变体，得到$h_{1,k}=F_{1,k}(h_0)$，$h_{1,v}=F_{1,v}(h_0)$，并将它们在$h_{0,k}$和$h_{0,v}$之后入队。一般地，对于前向推理到第$l$层时，先计算压缩KV的$l$层的输出$h_l=F_{l}(h_{l-1})$；此时队列中的元素为$\bigl[ h_{0,k},h_{0,v},...,h_{l-1,k},h_{l-1,v}\bigr]$，将各组元素（同一层的KV看作一组）依次从队首出队，第$i$组元素($0 \le i \le l-1$)为$h_{i,k}$和$h_{i,v}$，计算$F_{l}(h_{i,k})$和$F_{l}(h_{i,v})$作为新的$h_{i,k}$和$h_{i,v}$再从队尾入队，直到队列中原本的$l$组元素都经过了这样出队->计算->入队的过程。其代表的含义是第$i$层的K/V不压缩时，其输出经过第$l$层之后的输出；最后还需要计算第$l$层的K/V不压缩时的$h_{l,k}=F_{l,k}(h_{l-1})$和$h_{l,v}=F_{l,v}(h_{l-1})$，并放入队列末尾。当该过程进行到最后一层时，队列中会有$2L$个元素，分别代表模型各个层的K/V不压缩，其他层的K/V和当前层的V/K按照当前秩分配进行压缩的情况下，模型最终的输出。再加上所有层的KV都按照当前的秩分配进行压缩得到的输出，我们一共会得到$2L+1$个输出。这个算法避免了用$2L+1$个不同模型都进行一次前向推理带来的更多耗时，得到了与其同样的效果。算法的伪代码如下：
 
-\begin{center}
-\begin{minipage}{0.96\linewidth}
-\textbf{算法 1：动态规划式单层解压前向}
-
-\textbf{Input:} 样本 $x$；层数 $L$；第$l$层的压缩映射 $F_l$；第$l$层的Key/Value 解压映射 $F_{l,k},F_{l,v}$ \\
-\textbf{Output:} 压缩模型输出 $y^{\text{full}}$ 及 $\{y^{(k,l)},y^{(v,l)}\}_{l=0}^{L-1}$
-
-\begin{enumerate}
-    \item 初始化：$\mathcal{Q}\gets\varnothing$；计算 $h_0=F_0(x)$，$h_{0,k}=F_{0,k}(x)$，$h_{0,v}=F_{0,v}(x)$，并将 $(h_{0,k},h_{0,v})$ 入队。
-    \item \textbf{for} $l=1$ \textbf{to} $L-1$ \textbf{do}
-    \begin{enumerate}
-        \item 计算压缩路径输出 $h_l \gets F_l(h_{l-1})$。
-        \item \textbf{for each} $(h_{i,k},h_{i,v})$（按入队顺序）\textbf{do}\\
-        \quad $h_{i,k} \gets F_l(h_{i,k})$，$h_{i,v}\gets F_l(h_{i,v})$，并把更新后的 $(h_{i,k},h_{i,v})$ 重新入队。
-        \item 生成当前层的 Key/Value 解压分支：$h_{l,k}=F_{l,k}(h_{l-1})$，$h_{l,v}=F_{l,v}(h_{l-1})$，并将 $(h_{l,k},h_{l,v})$ 入队。
-    \end{enumerate}
-    \item 结束时令 $y^=h_{L-1}$；令对队列中每对 $(h_{i,k},h_{i,v})$ 等于 $y^{(k,i)}$、$y^{(v,i)}$。
-\end{enumerate}
-\end{minipage}
-\end{center}
+\begin{algorithm}[htbp]
+\caption{动态规划式单层解压前向}
+\label{alg:dp-calibration}
+\KwIn{样本 $x$；层数 $L$；压缩映射 $\{F_l\}$；Key 解压映射 $\{F_{l,k}\}$；Value 解压映射 $\{F_{l,v}\}$}
+\KwOut{压缩模型输出 $y^{\text{full}}$ 及各层单侧解压结果 $\{y^{(k,l)}, y^{(v,l)}\}_{l=0}^{L-1}$}
+\BlankLine
+$\mathcal{Q} \gets \varnothing$ \tcp*{队列保存 $(h_{i,k}, h_{i,v})$ 成对元素}
+$h_0 \gets F_0(x)$； $h_{0,k} \gets F_{0,k}(x)$； $h_{0,v} \gets F_{0,v}(x)$；\\
+$\mathcal{Q}.\mathrm{enqueue}(h_{0,k}, h_{0,v})$；
+\BlankLine
+\For{$l \gets 1$ \KwTo $L-1$}{
+    $h_l \gets F_l(h_{l-1})$ \tcp*{压缩路径输出}
+    \For{$i \gets 0$ \KwTo $l-1$}{
+        $(\tilde{h}_{i,k}, \tilde{h}_{i,v}) \gets \mathcal{Q}.\mathrm{dequeue}()$；\\
+        $\tilde{h}_{i,k} \gets F_l(\tilde{h}_{i,k})$； $\tilde{h}_{i,v} \gets F_l(\tilde{h}_{i,v})$；\\
+        $\mathcal{Q}.\mathrm{enqueue}(\tilde{h}_{i,k}, \tilde{h}_{i,v})$；
+    }
+    $h_{l,k} \gets F_{l,k}(h_{l-1})$； $h_{l,v} \gets F_{l,v}(h_{l-1})$；\\
+    $\mathcal{Q}.\mathrm{enqueue}(h_{l,k}, h_{l,v})$；
+}
+$y^{\text{full}} \gets h_{L-1}$；\\
+\For{$l \gets 0$ \KwTo $L-1$}{
+    $(y^{(k,l)}, y^{(v,l)}) \gets \mathcal{Q}[l]$；
+}
+\Return $y^{\text{full}}, \{y^{(k,l)}, y^{(v,l)}\}_{l=0}^{L-1}$；
+\end{algorithm}
 
 在得到了$2L$个$y^{(k,i)}$、$y^{(v,i)}$，分别对它们与$y$计算L2范数，$L2_{l,k}$和$L2_{l,v}$分别表示第$l$层的K/V不压缩时模型的输出和所有层的KV都按照当前秩分配进行压缩时模型的输出之间的L2范数差异，表示当前秩分配下压缩第$l$层的K/V引起的误差和导致的层间传递误差累积共同作用下对模型输出的影响。为了结果具有更好的泛化性，我们对所有样本计算的L2范数求和作为最终的判断指标，L2范数之和越大说明当前层的K/V分配的秩过少，引起的误差过大，应该分配更多的秩；L2范数之和越小说明当前层的K/V分配的秩比较足够，可以进一步压缩，将自己的秩分出一部分给其他压缩得较多的层。
 
@@ -166,28 +172,48 @@
 
 此外，算法中迭代循环的停止标准有两种：\textbf{(i)} 当连续若干次按照算法进行层间K/V秩的重新分配之后压缩后模型的输出与完整模型的输出之间的差异一直不下降，则停止迭代并将最终模型秩分配设定为，压缩后模型与完整模型输出之间差异最小的最近一次层间秩分配方式；\textbf{(ii)}当迭代次数达到预设的最大迭代次数，则停止迭代防止在校准集上过拟合。整个秩重分配算法的伪代码如下：
 
-\begin{center}
-\begin{minipage}{0.96\linewidth}
-\textbf{算法 2：敏感性引导的层间秩重分配}
-
-\textbf{Input:} 目标压缩率 $\rho$；层数 $L$；初始秩 $\{r_{k,l}^{(0)}, r_{v,l}^{(0)}\}$；校准集 $\mathcal{D}_\text{cal}$；动态规划算子 $F_l,F_{l,k},F_{l,v}$；步长学习率 $\eta$；最小/最大步长 $\delta_{\min},\delta_{\max}$；最大迭代次数 $T_{\max}$；允许连续未提升的轮数 $K$\\
-\textbf{Output:} 最优秩 $\{r_{k,l}^\star,r_{v,l}^\star\}$ 及对应压缩输出
-
-\begin{enumerate}
-    \item 初始化：$t\gets0$，$r_{k,l}\gets r_{k,l}^{(0)}$，$r_{v,l}\gets r_{v,l}^{(0)}$；记录当前配置的总误差 $\mathcal{E}_{\text{best}}$，设无提升计数 $c\gets0$，最优秩 $\{r_{k,l}^\star,r_{v,l}^\star\}\gets\{r_{k,l},r_{v,l}\}$。
-    \item \textbf{while} $t<T_{\max}$ \textbf{and} $c<K$ \textbf{do}
-    \begin{enumerate}
-        \item 对 $\mathcal{D}_\text{cal}$ 的每个样本运行算法~1，得到压缩输出 $y$ 及 $\{y^{(k,l)},y^{(v,l)}\}$，并计算 $L2_{l,k}$、$L2_{l,v}$ 以及全局平均误差 $\overline{\Delta}$。
-        \item 依据当前秩计算 $g_{k,l},g_{v,l}$ 与归一化敏感性 $\alpha_{k,l},\alpha_{v,l}$。
-        \item 选取 $\ell_{k,\text{max}}=\arg\max_l L2_{l,k}$、$\ell_{k,\text{min}}=\arg\min_l L2_{l,k}$，以及 $\ell_{v,\text{max}},\ell_{v,\text{min}}$。
-        \item 计算步长 $\delta_k=\mathrm{clip}(\eta(\alpha_{\ell_{k,\text{max}}}+\alpha_{\ell_{k,\text{min}}}),\delta_{\min},\delta_{\max})$，$\delta_v$ 同理。
-        \item 更新秩：$r_{\ell_{k,\text{max}}}\gets \min(d, r_{\ell_{k,\text{max}}}+\delta_k)$，$r_{\ell_{k,\text{min}}}\gets \max(1, r_{\ell_{k,\text{min}}}-\delta_k)$；Value 分支同理，必要时对超出预算的秩做微调以保持约束~\eqref{eq:rank-budget}。
-        \item 使用新秩重新在 $\mathcal{D}_\text{cal}$ 上计算压缩模型与完整模型的 L2 误差 $\mathcal{E}$；若 $\mathcal{E}<\mathcal{E}_{\text{best}}$ 则更新 $\mathcal{E}_{\text{best}}$、$\{r_{k,l}^\star,r_{v,l}^\star\}$ 并令 $c\gets0$，否则 $c\gets c+1$。
-        \item $t\gets t+1$。
-    \end{enumerate}
-    \item 返回 $\{r_{k,l}^\star,r_{v,l}^\star\}$ 及对应压缩配置。
-\end{enumerate}
-\end{minipage}
-\end{center}
+\begin{algorithm}[htbp]
+\caption{敏感性引导的层间秩重分配}
+\label{alg:rank-redistribution}
+\KwIn{目标压缩率 $\rho$；层数 $L$；初始秩 $\{r_{k,l}^{(0)}, r_{v,l}^{(0)}\}$；校准集 $\mathcal{D}_\text{cal}$；算子 $F_l,F_{l,k},F_{l,v}$；学习率 $\eta$；步长上下界 $\delta_{\min},\delta_{\max}$；最大迭代次数 $T_{\max}$；允许连续未提升次数 $K$}
+\KwOut{最优秩 $\{r_{k,l}^\star, r_{v,l}^\star\}$ 及对应压缩输出}
+\BlankLine
+$t \gets 0$； $c \gets 0$； $\{r_{k,l}, r_{v,l}\} \gets \{r_{k,l}^{(0)}, r_{v,l}^{(0)}\}$；\\
+计算当前秩配置下的误差 $\mathcal{E}_{\text{best}}$ 并记录 $\{r_{k,l}^\star, r_{v,l}^\star\}$；
+\BlankLine
+\While{$t < T_{\max}$ \KwAnd $c < K$}{
+    \tcc{1. 运行算法~\ref{alg:dp-calibration} 获取各层 L2 指标}
+    \For{$x \in \mathcal{D}_\text{cal}$}{
+        $(y^{\text{full}}, \{y^{(k,l)}, y^{(v,l)}\}) \gets \text{Algorithm}~\ref{alg:dp-calibration}(x)$；\\
+        累积 $L2_{l,k} \gets L2_{l,k} + \|y^{\text{full}} - y^{(k,l)}\|_2$；\\
+        累积 $L2_{l,v} \gets L2_{l,v} + \|y^{\text{full}} - y^{(v,l)}\|_2$；
+    }
+    计算 $\overline{\Delta} \gets \mathrm{mean}_{l}(L2_{l,k} + L2_{l,v})$；
+    \tcc{2. 根据敏感性和误差选择需要转移秩的层}
+    依据前述公式计算 $g_{k,l}, g_{v,l}$ 及 $\alpha_{k,l}, \alpha_{v,l}$；\\
+    $\ell_{k,\text{max}} \gets \arg\max_l L2_{l,k}$； $\ell_{k,\text{min}} \gets \arg\min_l L2_{l,k}$；\\
+    $\ell_{v,\text{max}} \gets \arg\max_l L2_{l,v}$； $\ell_{v,\text{min}} \gets \arg\min_l L2_{l,v}$；
+    \tcc{3. 依据敏感性自适应地设置步长并更新秩}
+    $\delta_k \gets \mathrm{clip}(\eta(\alpha_{\ell_{k,\text{max}}} + \alpha_{\ell_{k,\text{min}}}), \delta_{\min}, \delta_{\max})$；\\
+    $\delta_v \gets \mathrm{clip}(\eta(\alpha_{\ell_{v,\text{max}}} + \alpha_{\ell_{v,\text{min}}}), \delta_{\min}, \delta_{\max})$；\\
+    $r_{\ell_{k,\text{max}}} \gets \min(d, r_{\ell_{k,\text{max}}} + \delta_k)$；\\
+    $r_{\ell_{k,\text{min}}} \gets \max(1, r_{\ell_{k,\text{min}}} - \delta_k)$；\\
+    $r_{\ell_{v,\text{max}}} \gets \min(d, r_{\ell_{v,\text{max}}} + \delta_v)$；\\
+    $r_{\ell_{v,\text{min}}} \gets \max(1, r_{\ell_{v,\text{min}}} - \delta_v)$；\\
+    若违反约束~\eqref{eq:rank-budget}，则按比例缩放差值以回到预算内；
+    \tcc{4. 评估新秩配置并决定是否接受}
+    在 $\mathcal{D}_\text{cal}$ 上重新计算 $\mathcal{E}_{\text{curr}}$；\\
+    \If{$\mathcal{E}_{\text{curr}} < \mathcal{E}_{\text{best}}$}{
+        $\mathcal{E}_{\text{best}} \gets \mathcal{E}_{\text{curr}}$；\\
+        $\{r_{k,l}^\star, r_{v,l}^\star\} \gets \{r_{k,l}, r_{v,l}\}$；\\
+        $c \gets 0$；
+    }
+    \Else{
+        $c \gets c + 1$；
+    }
+    $t \gets t + 1$；
+}
+\Return $\{r_{k,l}^\star, r_{v,l}^\star\}$ 及其对应的压缩配置；
+\end{algorithm}
 \section{本章小结}
 本章提出了一套在全局压缩率约束下自适应分配层间秩的完整流程：首先以激活/注意力感知后的 Key/Value 低秩性为依据，通过全局奇异值能量排序实现公平的秩初始化；随后借助校准集与动态规划式单层解压推理，高效评估各层压缩误差的累积影响，并结合 Top-$M$ 注意力词元筛选凸显关键位置；最后利用误差敏感性度量构建贪心重分配算法，在迭代中动态调节层间秩配额并配合多重停止准则稳定收敛。这一系列设计为下一步整体推理加速提供了可控、精细且高效的压缩率分配机制。
