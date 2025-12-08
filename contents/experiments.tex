@@ -30,12 +30,12 @@ PPL 越低，说明模型越能贴近真实数据分布、准确预测下一个 
 \subsection{LongBench 长上下文评测}
 LongBench 覆盖 6 大任务类型、共 21 个子任务，旨在系统评估模型在长上下文语境下的能力：Multi-doc QA（HotpotQA、2WikiMultihopQA、MuSiQue、DuReader，需要在多篇英文或中文文档中检索相关信息并回答问题，其中 DuReader 为中文多文档问答）、Single-doc QA（MultiFieldQA-en/zh 涵盖多领域长文、NarrativeQA 针对故事或剧本、Qasper 面向 NLP 论文提问），Summarization（GovReport 政府报告摘要、MultiNews 多新闻摘要、QMSum 面向会议记录的查询式摘要、VCSUM 中文会议摘要）、Few-shot（TriviaQA、NQ 的单文档 QA Few-shot 设定、SAMSum 对话摘要 Few-shot、TREC 问题分类 50 类、LSHT 中文新闻分类 24 类）、Synthetic（PassageRetrieval-en/zh 按摘要反推段落、PassageCount 统计重复段落数量）以及 Code（LCC 在单文件长代码中预测下一行、RepoBench-P 在跨文件仓库代码中做下一行预测）。我们在上述中英文混合基准上运行实验，输入长度范围从 4K 到 100K tokens，重点考察压缩方案在极长上下文情况下的稳定性与泛化能力。
 
-LongBench 的评测指标与任务类型对应关系如下：
+LongBench 统一采用以下指标：
 \begin{itemize}
-    \item \textbf{F1}：用于 HotpotQA、2WikiMultihopQA、MuSiQue、MultiFieldQA（英/中）、NarrativeQA、Qasper、TriviaQA 等抽取式问答或 Few-shot QA 任务。具体做法是先计算预测答案与参考答案的 precision、recall，然后取调和平均，兼顾答案覆盖度和冗余度。
-    \item \textbf{Rouge-L}：用于包括 DuReader、GovReport、QMSum、MultiNews、VCSUM、SAMSum 等摘要或生成式 QA 任务。Rouge-L 基于最长公共子序列（LCS）统计预测文本与参考摘要的重合程度，衡量句子级覆盖能力。
-    \item \textbf{Accuracy}：用于 TREC、LSHT、PassageRetrieval-en/zh、PassageCount 等分类或选择题类型任务，直接统计预测标签与标准答案一致的比例，适合合成检索、长上下文 Few-shot 分类等设置。
-    \item \textbf{Edit Similarity}：用于 LCC、RepoBench-P 等代码理解/补全任务。该指标基于编辑距离对预测代码与参考代码之间的相似度进行归一化，反映长序列生成在语法和结构层面的准确性。
+    \item \textbf{F1}：先计算预测答案与参考答案之间的精确率（precision）和召回率（recall），再取二者的调和平均，兼顾答案覆盖度与冗余度，适合抽取式问答等任务。
+    \item \textbf{Rouge-L}：基于预测文本与参考摘要之间的最长公共子序列（LCS）长度，计算覆盖率与精确率后合成得分，衡量生成摘要与参考摘要的句子级匹配程度。
+    \item \textbf{Accuracy}：直接统计预测标签是否与标准答案一致，是分类或多选任务中最直观的指标。
+    \item \textbf{Edit Similarity}：根据编辑距离衡量预测序列与参考序列的一致性，常归一化到 [0,1]，用于代码或结构化输出的精细比较。
 \end{itemize}
 
 在实验中，我们遵循 LongBench 的统一提示格式与分词策略，逐子任务汇报上述指标，并与当前公开的长上下文压缩/量化方法进行比较，检验“低秩+混合精度+可控粒度”策略在多类型长上下文任务中的泛化能力。
