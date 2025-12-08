@@ -28,14 +28,14 @@ PPL 越低，说明模型越能贴近真实数据分布、准确预测下一个 
 在这些数据集上，我们按照官方的 zero-shot prompt 格式，直接让模型输出答案，并统计预测准确率。由于 accuracy 是一个统一的离散指标，能够方便地比较不同压缩策略在多任务零样本推理中的性能差异，也能帮助分析压缩对“无需额外监督即可完成任务”的影响。我们在表格中分别汇报未量化的低秩方案、叠加混合精度量化以及其他 baseline 的准确率，展示在低比特与层间秩分配下模型知识推理能力的保持情况。
 
 \subsection{LongBench 长上下文评测}
-LongBench 覆盖 6 大任务类型、共 21 个子任务，旨在系统评估模型在长上下文语境下的能力：Multi-doc QA（跨文档问题回答）、Single-doc QA（单文档抽取式问答）、Summarization（多粒度摘要生成）、Few-shot（长上下文 Few-shot 指令跟随）、Synthetic（合成推理任务）以及 Code（长代码理解与补全）。我们在 LongBench 官方提供的中文与英文混合基准上运行实验，输入长度范围从 4K 到 100K tokens，重点考察压缩方案在极长上下文情况下的稳定性。
+LongBench 覆盖 6 大任务类型、共 21 个子任务，旨在系统评估模型在长上下文语境下的能力：Multi-doc QA（HotpotQA、2WikiMultihopQA、MuSiQue、DuReader，指标以 F1 或 Rouge-L 为主，平均长度 4.9K～15.8K token）、Single-doc QA（MultiFieldQA-en/zh、NarrativeQA、Qasper，指标为 F1，平均长度 3.6K～18.4K）、Summarization（GovReport、QMSum、MultiNews、VCSUM，指标为 Rouge-L，平均长度 2.1K～15.4K）、Few-shot（TriviaQA、SAMSum、TREC、LSHT，指标包含 F1、Rouge-L、Accuracy，平均长度 5.1K～22.3K）、Synthetic（PassageRetrieval-en/zh、PassageCount，指标为 Accuracy，平均长度 6.7K～11.1K）以及 Code（LCC、RepoBench-P，指标为 Edit Similarity，平均长度 1.2K～4.2K）。我们在上述中英文混合基准上运行实验，输入长度范围从 4K 到 100K tokens，重点考察压缩方案在极长上下文情况下的稳定性与泛化能力。
 
-LongBench 根据具体任务类型采用不同的评测指标：
+LongBench 的评测指标与任务类型对应关系如下：
 \begin{itemize}
-    \item \textbf{F1}：用于抽取式问答任务，首先计算预测答案与参考答案的 precision/recall，再求二者的调和平均。F1 能平衡“答案覆盖度”和“冗余度”，常用于 Multi-doc QA、Single-doc QA 等需要逐字匹配的场景。
-    \item \textbf{Rouge-L}：用于摘要类任务，基于预测与参考摘要间的最长公共子序列（LCS）计算 recall、precision，再合成为 Rouge-L。该指标强调语句级覆盖能力，适合评估 Summarization。
-    \item \textbf{Accuracy}：用于分类式或离散选择类任务，如 Synthetic、Few-shot 分类子任务、Code 选择题等，统计预测是否与标准答案一致。
-    \item \textbf{Edit Similarity}：用于代码或结构化生成任务，衡量预测序列与参考序列的编辑距离（或归一化相似度），能反映长序列输出的细粒度一致性。
+    \item \textbf{F1}：用于 HotpotQA、2WikiMultihopQA、MuSiQue、MultiFieldQA（英/中）、NarrativeQA、Qasper、TriviaQA 等抽取式问答或 Few-shot QA 任务。具体做法是先计算预测答案与参考答案的 precision、recall，然后取调和平均，兼顾答案覆盖度和冗余度。
+    \item \textbf{Rouge-L}：用于包括 DuReader、GovReport、QMSum、MultiNews、VCSUM、SAMSum 等摘要或生成式 QA 任务。Rouge-L 基于最长公共子序列（LCS）统计预测文本与参考摘要的重合程度，衡量句子级覆盖能力。
+    \item \textbf{Accuracy}：用于 TREC、LSHT、PassageRetrieval-en/zh、PassageCount 等分类或选择题类型任务，直接统计预测标签与标准答案一致的比例，适合合成检索、长上下文 Few-shot 分类等设置。
+    \item \textbf{Edit Similarity}：用于 LCC、RepoBench-P 等代码理解/补全任务。该指标基于编辑距离对预测代码与参考代码之间的相似度进行归一化，反映长序列生成在语法和结构层面的准确性。
 \end{itemize}
 
 在实验中，我们遵循 LongBench 的统一提示格式与分词策略，逐子任务汇报上述指标，并与当前公开的长上下文压缩/量化方法进行比较，检验“低秩+混合精度+可控粒度”策略在多类型长上下文任务中的泛化能力。
