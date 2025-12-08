@@ -28,7 +28,7 @@ PPL 越低，说明模型越能贴近真实数据分布、准确预测下一个 
 在这些数据集上，我们按照官方的 zero-shot prompt 格式，直接让模型输出答案，并统计预测准确率。由于 accuracy 是一个统一的离散指标，能够方便地比较不同压缩策略在多任务零样本推理中的性能差异，也能帮助分析压缩对“无需额外监督即可完成任务”的影响。我们在表格中分别汇报未量化的低秩方案、叠加混合精度量化以及其他 baseline 的准确率，展示在低比特与层间秩分配下模型知识推理能力的保持情况。
 
 \subsection{LongBench 长上下文评测}
-LongBench 覆盖 6 大任务类型、共 21 个子任务，旨在系统评估模型在长上下文语境下的能力：Multi-doc QA（HotpotQA、2WikiMultihopQA、MuSiQue、DuReader，指标以 F1 或 Rouge-L 为主，平均长度 4.9K～15.8K token）、Single-doc QA（MultiFieldQA-en/zh、NarrativeQA、Qasper，指标为 F1，平均长度 3.6K～18.4K）、Summarization（GovReport、QMSum、MultiNews、VCSUM，指标为 Rouge-L，平均长度 2.1K～15.4K）、Few-shot（TriviaQA、SAMSum、TREC、LSHT，指标包含 F1、Rouge-L、Accuracy，平均长度 5.1K～22.3K）、Synthetic（PassageRetrieval-en/zh、PassageCount，指标为 Accuracy，平均长度 6.7K～11.1K）以及 Code（LCC、RepoBench-P，指标为 Edit Similarity，平均长度 1.2K～4.2K）。我们在上述中英文混合基准上运行实验，输入长度范围从 4K 到 100K tokens，重点考察压缩方案在极长上下文情况下的稳定性与泛化能力。
+LongBench 覆盖 6 大任务类型、共 21 个子任务，旨在系统评估模型在长上下文语境下的能力：Multi-doc QA（HotpotQA、2WikiMultihopQA、MuSiQue、DuReader，需要在多篇英文或中文文档中检索相关信息并回答问题，其中 DuReader 为中文多文档问答）、Single-doc QA（MultiFieldQA-en/zh 涵盖多领域长文、NarrativeQA 针对故事或剧本、Qasper 面向 NLP 论文提问），Summarization（GovReport 政府报告摘要、MultiNews 多新闻摘要、QMSum 面向会议记录的查询式摘要、VCSUM 中文会议摘要）、Few-shot（TriviaQA、NQ 的单文档 QA Few-shot 设定、SAMSum 对话摘要 Few-shot、TREC 问题分类 50 类、LSHT 中文新闻分类 24 类）、Synthetic（PassageRetrieval-en/zh 按摘要反推段落、PassageCount 统计重复段落数量）以及 Code（LCC 在单文件长代码中预测下一行、RepoBench-P 在跨文件仓库代码中做下一行预测）。我们在上述中英文混合基准上运行实验，输入长度范围从 4K 到 100K tokens，重点考察压缩方案在极长上下文情况下的稳定性与泛化能力。
 
 LongBench 的评测指标与任务类型对应关系如下：
 \begin{itemize}
