@@ -1,0 +1,127 @@
+\subsection{零样本推理任务}
+\begin{table}[htbp]
+    \centering
+    \caption{Llama3.1-8B-Instruct 在零样本推理任务上的准确率 (\%)}
+    \label{tab:zeroshot-acc}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lcccccccc}
+        \toprule
+        \textbf{模型 / 压缩方式} & \textbf{BoolQ} & \textbf{HellaSwag} & \textbf{OpenBookQA} & \textbf{ARC-C} & \textbf{ARC-E} & \textbf{Winogrande} & \textbf{PIQA} & \textbf{CEval} \\
+        \midrule
+        原模型 (Llama3.1-8B-Instruct) &  &  &  &  &  &  &  &  \\
+        SVD &  &  &  &  &  &  &  &  \\
+        ASVD &  &  &  &  &  &  &  &  \\
+        Palu &  &  &  &  &  &  &  &  \\
+        \textbf{Ours} &  &  &  &  &  &  &  &  \\
+        \bottomrule
+    \end{tabular}}
+\end{table}
+\section{实验结果与分析}
+\subsection{语言建模任务}
+\begin{table}[htbp]
+    \centering
+    \caption{Llama3.1-8B-Instruct 在语言建模数据集上的困惑度 (PPL)}
+    \label{tab:lm-ppl}
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{模型 / 压缩方式} & \textbf{WikiText-2} & \textbf{PTB} \\
+        \midrule
+        原模型 (Llama3.1-8B-Instruct) & 7.21 & 12.33 \\
+        SVD & 9.93 & 17.03 \\
+        ASVD & 9.16 & 15.62 \\
+        Palu & 8.94 & 15.13 \\
+        \textbf{Ours} & \textbf{8.04} & \textbf{14.14} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+\begin{table}[htbp]
+    \centering
+    \caption{LongBench 子任务概览}
+    \label{tab:longbench-tasks}
+    \begin{tabular}{lccccc}
+        \toprule
+        \textbf{Task} & \textbf{Task Type} & \textbf{Eval Metric} & \textbf{Avg len} & \textbf{Language} & \textbf{\#Sample} \\
+        \midrule
+        HotpotQA & Multi-doc QA & F1 & 9{,}151 & EN & 200 \\
+        2WikiMultihopQA & Multi-doc QA & F1 & 4{,}887 & EN & 200 \\
+        MuSiQue & Multi-doc QA & F1 & 11{,}214 & EN & 200 \\
+        DuReader & Multi-doc QA & Rouge-L & 15{,}768 & ZH & 200 \\
+        MultiFieldQA-en & Single-doc QA & F1 & 4{,}559 & EN & 150 \\
+        MultiFieldQA-zh & Single-doc QA & F1 & 6{,}701 & ZH & 200 \\
+        NarrativeQA & Single-doc QA & F1 & 18{,}409 & EN & 200 \\
+        Qasper & Single-doc QA & F1 & 3{,}619 & EN & 200 \\
+        GovReport & Summarization & Rouge-L & 8{,}734 & EN & 200 \\
+        QMSum & Summarization & Rouge-L & 10{,}614 & EN & 200 \\
+        MultiNews & Summarization & Rouge-L & 2{,}113 & EN & 200 \\
+        VCSUM & Summarization & Rouge-L & 15{,}380 & ZH & 200 \\
+        TriviaQA & Few shot & F1 & 8{,}209 & EN & 200 \\
+        SAMSum & Few shot & Rouge-L & 6{,}258 & EN & 200 \\
+        TREC & Few shot & Accuracy & 5{,}177 & EN & 200 \\
+        LSHT & Few shot & Accuracy & 22{,}337 & ZH & 200 \\
+        PassageRetrieval-en & Synthetic & Accuracy & 9{,}289 & EN & 200 \\
+        PassageCount & Synthetic & Accuracy & 11{,}141 & EN & 200 \\
+        PassageRetrieval-zh & Synthetic & Accuracy & 6{,}745 & ZH & 200 \\
+        LCC & Code & Edit Sim & 1{,}235 & Python/C\#/Java & 500 \\
+        RepoBench-P & Code & Edit Sim & 4{,}206 & Python/Java & 500 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+\chapter{实验设计与结果分析}
+本章面向多个评测维度系统验证所提压缩方案的有效性：我们在语言建模任务（WikiText-2、PTB）上考察困惑度与记忆压缩效果，验证低秩与量化对序列建模基础指标的影响；在长上下文理解领域，我们复现 LongBench 中 21 个异构子任务（覆盖传统一问一答式问答、检索增强推理、事件排序、结构化信息抽取以及多种 Summarization 形式），重点评估模型在 10K～100K token 的长文本输入下是否仍能稳定保持性能；阅读理解与问答方向则涵盖 BoolQ、OpenBookQA、ARC-C、ARC-E 等具有不同推理深度和开放性的问题集合；常识推理任务包括 HellaSwag、Winogrande、PIQA，以考察压缩后的模型在语义完形填空、常识匹配方面的鲁棒性；最后，CEval 提供了中文标准化考试场景，覆盖理工、人文、社科多学科，能综合检验模型跨领域知识与推理能力。在这些任务之上，我们统一报告困惑度、Rouge、准确率、宏 F1 等多种指标，形成一个覆盖生成与判别场景的评测矩阵。
+
+在模型与设置方面，我们选取 Llama3 系列不同容量版本以及 Mixtral 组合专家模型，分别在轻、中、重三档 KV 压缩率（对应不同 rank 预算与量化位宽）下进行评估；上下文长度则覆盖常见的 4K/8K、扩展的 32K，以及极限的 64K/100K，以此观察压缩策略对内存占用与稳定性的影响。为了保证结论严谨，我们首先使用前两章提出的“激活/注意力感知低秩分解 + 层间秩重分配”方案（未启用量化）与当前最强的低秩压缩 baseline 做逐项对比，分析在相同 rank 预算下的性能差距；随后叠加第三章提出的混合精度与可控粒度量化模块，观察在同等压缩率预算下是否进一步降低困惑度、提升生成质量或问答准确率。通过与多种 KV 压缩/量化方法逐一比对，我们展示低秩感知的混合精度策略在复杂推理与长上下文场景中的优势、鲁棒性及可拓展性。
+
+\section{实验数据集与评估指标}
+为了全面评估所提出压缩策略对模型能力的影响，本章按任务类型将实验划分为三个层面：首先在语言建模基准上计算困惑度，量化压缩对基础序列建模质量的影响；随后在多样化的零样本推理任务上以准确率衡量知识与常识推理的保持程度；最后在 LongBench 长上下文基准上覆盖 21 个子任务，使用 F1、Rouge-L、Accuracy、Edit Similarity 等指标考察模型在文本生成、问答、分类与代码补全等复杂场景中的表现。下面依次介绍各类数据集与评估方式。
+\subsection{语言建模与困惑度}
+困惑度（Perplexity, PPL）是衡量语言模型预测给定语料能力的经典指标，其本质是序列平均负对数似然的指数形式。设测试集包含 $N$ 个 token，模型对第 $i$ 个 token 的条件概率为 $p_\theta(w_i \mid w_{<i})$，则困惑度定义为
+\[
+    \mathrm{PPL} = \exp\left(-\frac{1}{N} \sum_{i=1}^{N} \log p_\theta(w_i \mid w_{<i})\right).
+\]
+PPL 越低，说明模型越能贴近真实数据分布、准确预测下一个 token。对于 KV 缓存压缩方案而言，困惑度能够最直接地反映压缩带来的语言建模能力损失：若压缩破坏了注意力或隐状态表示，模型对后续 token 的概率分布会偏离，从而显著提升 PPL。为保证对比公平，我们在评估时固定 tokenizer、上下文长度、最大生成步数以及解码温度等因素，确保困惑度差异主要来自压缩策略本身。
+
+在语言建模基准方面，我们选用 WikiText-2 与 Penn Treebank（PTB）两个经典数据集。WikiText-2 来源于维基百科精选条目，保留原始大小写、标点与引用信息，语料规模约 200 万词，句子较长并带有自然的跨句上下文，能够反映真实文本中复杂语法与实体共指等现象。PTB 则基于《华尔街日报》语料，经过严格清洗与词表压缩（约 100 万词），移除了数字与大部分标点，句式更为规整，常用于测试模型在小词表、正式文体下的建模能力。我们分别在这两个数据集上记录各类压缩方案的困惑度，并联合压缩率曲线展现“低秩裁剪→低秩+量化→混合精度”三种方式在基础语言建模任务上的优劣。该实验既能量化语言层面损失，也为后续更复杂任务的表现提供参考上限。
+
+\subsection{零样本推理与准确率}
+在零样本（zero-shot）设置下，我们直接使用模型在预训练阶段学到的知识与推理能力，不提供额外监督信号进行微调或少样本提示，而是通过纯粹的 prompt 结构要求模型给出答案。为了全面评估压缩策略对泛化能力的影响，我们选取以下常用的零样本基准，并统一使用准确率（Accuracy）作为评测指标：
+\begin{itemize}
+    \item \textbf{BoolQ}：是一个面向“是/否”问题的自然问答数据集，共包含 12,697 个样例，其中训练集 9,427 条、验证集 3,270 条。每个样例由（问题，证据段落，布尔答案）组成，问题来自用户在无提示、无约束环境中生成的自然查询，证据段落及可选的页面标题来自 Wikipedia。BoolQ 的文本长度跨度较大（从约 35 token 到 4.7K token），既包含短问题，也涵盖多段长文；其二分类形式与自然语言推断任务类似，评估模型能否依据证据段落对问题做出正确的“是/否”判断。
+    \item \textbf{HellaSwag}：来自 Bisk et al.（ACL 2019）的常识推理数据集“Can a Machine Really Finish Your Sentence?”，定位于带有多选结尾的自然语言推断任务，核心目标是让模型在给定上下文下完成最合理、最自然的句子续写。数据集中包含 39,905 条训练样本、10,042 条验证样本和 10,003 条测试样本，每条样本由一个描述性上下文和 4 个候选结尾构成（其中只有一个正确）。为提升难度，干扰选项由强大的语言模型生成并经过人工筛选，极具迷惑性，因此非常适合衡量压缩后模型在常识与语义连贯性上的保真度。
+    \item \textbf{OpenBookQA}：旨在推动“开放式教科书考试”风格的高级问答研究，数据集中附带一本概括科学核心事实的“Open Book”，每个问题都需要结合该书中的显式知识以及额外的常识或科学推理才能解答。数据总量 5,957 条，其中训练/验证/测试集分别为 4,957/500/500。题目形式为四选一，强调多步推理、补充知识调动与复杂文本理解，其目标是考察模型是否能在压缩之后仍保持对科学概念与自然语言表达的深入理解。
+    \item \textbf{ARC-C / ARC-E}：AI2 Reasoning Challenge（ARC）收集了 7,787 道真实的小学科学多选题，旨在推动高级推理式问答研究。数据集按照难度划分为 Challenge（C）与 Easy（E）两部分：Challenge 子集中保留了检索式算法与共现式算法均答错的问题，更强调对复杂语言描述和隐含常识的推理；Easy 子集则包含相对直接的题目。我们使用 ARC 官方提供的分割，C/E 两部分的训练/验证/测试样本分别为 1,119/299/1,172 与 2,251/570/2,376。评估时模型需从四个选项中选出正确答案，该任务有助于检验压缩后模型在科学问答场景下的多步推断能力。
+    \item \textbf{Winogrande}：是对 Winograd Schema Challenge 的大规模扩展，共收录约 44K 个常识推理问题。每道题以填空形式呈现，给出两种可选词或短语，需要模型理解句子中的事件关系与指代逻辑，选择更合理的填入空缺。数据集经过专门设计以缓解原始 WSC 的偏置，更适合评估压缩之后的模型在代词消解与常识推理方面的鲁棒性。
+    \item \textbf{PIQA}：Physical Interaction: Question Answering 数据集专注于物理常识推理，典型问题如“在没有眼影刷的情况下，是用棉棒还是牙签更适合上眼影？”这类情境要求模型具备对工具使用、安全性和日常物理常识的理解。每个样例提供一个短描述和两个操作选项，模型需判断哪一个更可行、更符合现实。PIQA 的目标是推动具备物理互动理解能力的自然语言系统，准确率能直接衡量压缩后模型在物理常识推断方面的表现。
+    \item \textbf{CEval}：一个面向中文大模型的综合测评套件，覆盖 52 个学科、共 13,948 道多选题，按难度划分为四个层级，领域涉及理工、社科、人文、医学等。每个子科目提供 dev/val/test 三个子集：dev 含 5 个带解析的示例（可用于 few-shot 提示），val 用于调参数，test 用于最终评估。我们在零样本设定下，直接对 test 部分进行预测并统计准确率，用以衡量压缩方案在中文多学科知识与推理方面的表现。
+\end{itemize}
+
+在这些数据集上，我们按照官方的 zero-shot prompt 格式，直接让模型输出答案，并统计预测准确率。由于 accuracy 是一个统一的离散指标，能够方便地比较不同压缩策略在多任务零样本推理中的性能差异，也能帮助分析压缩对“无需额外监督即可完成任务”的影响。我们在表格中分别汇报未量化的低秩方案、叠加混合精度量化以及其他 baseline 的准确率，展示在低比特与层间秩分配下模型知识推理能力的保持情况。
+
+\subsection{LongBench 长上下文评测}
+LongBench 覆盖 6 大任务类型、共 21 个子任务，旨在系统评估模型在长上下文语境下的能力：Multi-doc QA（HotpotQA、2WikiMultihopQA、MuSiQue、DuReader，需要在多篇英文或中文文档中检索相关信息并回答问题，其中 DuReader 为中文多文档问答）、Single-doc QA（MultiFieldQA-en/zh 涵盖多领域长文、NarrativeQA 针对故事或剧本、Qasper 面向 NLP 论文提问），Summarization（GovReport 政府报告摘要、MultiNews 多新闻摘要、QMSum 面向会议记录的查询式摘要、VCSUM 中文会议摘要）、Few-shot（TriviaQA、NQ 的单文档 QA Few-shot 设定、SAMSum 对话摘要 Few-shot、TREC 问题分类 50 类、LSHT 中文新闻分类 24 类）、Synthetic（PassageRetrieval-en/zh 按摘要反推段落、PassageCount 统计重复段落数量）以及 Code（LCC 在单文件长代码中预测下一行、RepoBench-P 在跨文件仓库代码中做下一行预测）。我们在上述中英文混合基准上运行实验，输入长度范围从 4K 到 100K tokens，重点考察压缩方案在极长上下文情况下的稳定性与泛化能力。
+
+LongBench 统一采用以下指标：
+\begin{itemize}
+    \item \textbf{F1}：针对抽取式问答或文本匹配场景，先逐 token（或逐字）计算预测答案与参考答案之间的精确率（precision）和召回率（recall），再取二者的调和平均。相比单纯的精确率或召回率，F1 能同时考虑答案是否覆盖了所有关键 span 以及是否引入多余内容，因此更适合衡量模型在长上下文问答中的综合表现。
+    \item \textbf{Rouge-L}：用于摘要与生成式问答任务，基于预测文本与参考摘要之间的最长公共子序列（Longest Common Subsequence, LCS）计算得分。Rouge-L 会综合考虑 LCS 长度与预测/参考的整体长度，既反映预测内容对参考关键信息的覆盖程度，也考察句子级别的顺序一致性，是长文本摘要的标准衡量指标。
+    \item \textbf{Accuracy}：对分类或离散选择类任务，直接统计预测选项与标准答案完全一致的比例。该指标不依赖于序列级匹配，计算简单、解释直观，适合衡量长上下文 Few-shot 分类、段落检索等需要“一次性给出正确答案”的任务。
+    \item \textbf{Edit Similarity}：主要用于代码或结构化生成任务，以编辑距离（Edit Distance）衡量预测序列与参考序列之间的最小编辑操作数，并将其归一化得到相似度分数。该指标对单字符/单 token 的增删改都敏感，能够细致反映长代码生成在语法和结构层面的准确性。
+\end{itemize}
+
+在实验中，我们遵循 LongBench 的统一提示格式与分词策略，逐子任务汇报上述指标，并与当前公开的长上下文压缩/量化方法进行比较，检验“低秩+混合精度+可控粒度”策略在多类型长上下文任务中的泛化能力。
+\section{实验模型设置}
+为了验证压缩策略在不同架构与训练范式下的适应性，我们选择两条主流指令微调模型作为主体评测对象，分别代表西语系和中文系的典型开源大模型。
+
+\paragraph{Llama 3.1 8B Instruct} Llama 3.1 是 Meta 最新一代的开源基础模型系列，8B 版本在参数规模与推理成本之间取得平衡，采用标准的 decoder-only Transformer 架构，搭配持续优化的自回归训练策略与高质量混合语料。官方 Instruct 版本对原始模型进行了 RLHF、拒答/安全微调和风格调优，使其在指令遵循、对话问答、摘要生成等任务上保持稳定、可控的输出。该模型具备较长的上下文窗口和良好的多语言支持能力，也是开源社区常用的实验基准之一。
+
+\paragraph{Qwen2.5 7B Instruct} Qwen2.5 延续了 Qwen 系列的 Transformer 架构，7B Instruct 版本在大规模跨领域语料（包括技术文档、对话语料、知识图谱扩展文本等）上训练，并结合高质量的指令集做监督微调与 RLHF。模型支持多语言混合分词，内置工具调用与函数描述学习能力，在问答、对话、长文本任务上表现突出。官方提供的 Instruct 版本还包含安全过滤与格式化输出能力，使其在指令式评测中有更好的稳定性。
+
+在实验中，我们保持以上两种模型的原始权重与推理配置不变，只在推理阶段施加不同的 KV 压缩与量化策略，然后统一在上述数据集上评估困惑度、准确率以及 LongBench 指标，以验证所提方法在不同预训练语料与对齐范式下的通用性。
+
+\section{实验设置}
+所有实验均在配备 NVIDIA L20（48GB 显存）的服务器上完成。为了保证各子模块的对比公平，我们使用统一的推理参数（最大生成步数、温度等），并仅在 KV 压缩与量化策略上做变化。具体到本论文提出的两阶段方法：
+\begin{itemize}
+    \item 在 \texttt{methdology1.tex} 中用于构建 scaling 矩阵的 calibration 集，英文部分采样自 BoolQ 训练集的 512 个样本，中文部分采样自 DuReader 训练集的 128 个样本。二者覆盖“是/否”问答和多文档中文 QA，有助于估计激活/注意力感知矩阵所需的统计量。
+    \item 在 \texttt{methdology2.tex} 的层间贪心 rank 分配算法中，为了提升效率，我们为英文模型选取了 PIQA 训练集的 32 个样本，为中文模型选取了 VCSUM 的 16 个样本作为 calibration 集。由于 rank 变化敏感性与误差累积更偏向于模型自身特性，即便样本量较小也能稳定反映趋势。
+    \item Rank 传递的超参数设置为：最大迭代步数 20，每次 rank 调整（Key 与 Value 独立计算）的学习率 $\eta = 0.4$，并在所有实验中固定。若达到最大步数或连续多轮无提升，则按照第二章描述提前停止。
+\end{itemize}
+在上述设置下，我们对 Llama 3.1 8B Instruct 与 Qwen2.5 7B Instruct 分别运行低秩、低秩+量化、混合精度等策略，并在全部数据集与指标上进行评估。
