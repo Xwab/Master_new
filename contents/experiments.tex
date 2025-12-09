@@ -1,3 +1,20 @@
+\subsection{零样本推理任务}
+\begin{table}[htbp]
+    \centering
+    \caption{Llama3.1-8B-Instruct 在零样本推理任务上的准确率 (\%)}
+    \label{tab:zeroshot-acc}
+    \begin{tabular}{lcccccccc}
+        \toprule
+        \textbf{模型 / 压缩方式} & \textbf{BoolQ} & \textbf{HellaSwag} & \textbf{OpenBookQA} & \textbf{ARC-C} & \textbf{ARC-E} & \textbf{Winogrande} & \textbf{PIQA} & \textbf{CEval} \\
+        \midrule
+        原模型 (Llama3.1-8B-Instruct) &  &  &  &  &  &  &  &  \\
+        SVD &  &  &  &  &  &  &  &  \\
+        ASVD &  &  &  &  &  &  &  &  \\
+        Palu &  &  &  &  &  &  &  &  \\
+        \textbf{Ours} &  &  &  &  &  &  &  &  \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 \section{实验结果与分析}
 \subsection{语言建模任务}
 \begin{table}[htbp]
