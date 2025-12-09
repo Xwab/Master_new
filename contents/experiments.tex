@@ -3,6 +3,7 @@
     \centering
     \caption{Llama3.1-8B-Instruct 在零样本推理任务上的准确率 (\%)}
     \label{tab:zeroshot-acc}
+    \resizebox{\textwidth}{!}{%
     \begin{tabular}{lcccccccc}
         \toprule
         \textbf{模型 / 压缩方式} & \textbf{BoolQ} & \textbf{HellaSwag} & \textbf{OpenBookQA} & \textbf{ARC-C} & \textbf{ARC-E} & \textbf{Winogrande} & \textbf{PIQA} & \textbf{CEval} \\
@@ -13,7 +14,7 @@
         Palu &  &  &  &  &  &  &  &  \\
         \textbf{Ours} &  &  &  &  &  &  &  &  \\
         \bottomrule
-    \end{tabular}
+    \end{tabular}}
 \end{table}
 \section{实验结果与分析}
 \subsection{语言建模任务}
