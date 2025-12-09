@@ -1,3 +1,21 @@
+\section{实验结果与分析}
+\subsection{语言建模任务}
+\begin{table}[htbp]
+    \centering
+    \caption{Llama3.1-8B-Instruct 在语言建模数据集上的困惑度 (PPL)}
+    \label{tab:lm-ppl}
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{模型 / 压缩方式} & \textbf{WikiText-2} & \textbf{PTB} \\
+        \midrule
+        原模型 (Llama3.1-8B-Instruct) & 7.21 & 12.33 \\
+        SVD & 9.93 & 17.03 \\
+        ASVD & 9.16 & 15.62 \\
+        Palu & 8.94 & 15.13 \\
+        \textbf{Ours} & \textbf{8.04} & \textbf{14.14} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 \begin{table}[htbp]
     \centering
     \caption{LongBench 子任务概览}
