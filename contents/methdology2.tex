@@ -160,12 +160,13 @@ $y^{\text{full}} \gets h_{L-1}$；\\
 
 在每一轮秩重分配得迭代过程中，对于Key和Value我们分别找到L2范数最大的层$\ell_{k,\text{max}}$、$\ell_{v,\text{max}}$和最小的层$\ell_{k,\text{min}}$、$\ell_{v,\text{min}}$，将L2范数最小的层的秩分一部分给L2范数最大的层。设置步长：
 \begin{align}
-    \delta_k = \eta\bigl(\alpha_{\ell_{k,\text{max}}}+\alpha_{\ell_{k,\text{min}}}\bigr), \\
-    \delta_v = \eta\bigl(\alpha_{\ell_{v,\text{max}}}+\alpha_{\ell_{v,\text{min}}}\bigr)
+    \delta_k = \eta\bigl(\alpha_{\ell_{k,\text{max}}}+\alpha_{\ell_{k,\text{min}}}\bigr)\cdot r_{\ell_{k,\text{min}}}, \\
+    \delta_v = \eta\bigl(\alpha_{\ell_{v,\text{max}}}+\alpha_{\ell_{v,\text{min}}}\bigr)\cdot r_{\ell_{v,\text{min}}}
 \end{align}
     
 
 其中 $\eta$ 为学习率。通过 $r_{\ell_{k,\text{max}}}\leftarrow r_{\ell_{k,\text{max}}}+\delta$、$r_{\ell_{k,\text{min}}}\leftarrow r_{\ell_{k,\text{min}}}-\delta$ 、$r_{\ell_{v,\text{max}}}\leftarrow r_{\ell_{v,\text{max}}}+\delta$、$r_{\ell_{v,\text{min}}}\leftarrow r_{\ell_{v,\text{min}}}-\delta$ 完成一次 rank 传递，并在新的秩配置下重新运行校准。为了避免震荡，我们在实践中还会设置最小/最大步长、并且防止变化后的秩小于1或大于$d$；我们在每轮重分配之后计算不压缩KV的情况下模型在校准集上的输出与按重分配的秩压缩后模型在校准集上的输出之间的差异，与上一轮的该差异对比来判断该轮的重分配有没有让模型的效果在总压缩率固定的情况下更好。若连续 $K$ 轮迭代都未降低“压缩模型 vs.~完整模型”的 L2 误差，则回滚至最佳秩配置（压缩模型与完整模型输出的L2范数最小的配置）并终止循环。当迭代次数超过了预设的最大次数时，也终止循环。
+此外，我们让步长与供给层当前的秩 $r_{\ell_{k,\text{min}}}$（或 $r_{\ell_{v,\text{min}}}$）成正比：当某层已极度精简时，即便其 L2 最小也只会贡献很小的步长，防止对脆弱层多次削减而造成震荡。
 
 \subsection{实现细节与复杂度分析}
 该贪心策略的开销主要来自两部分：校准前向与秩重分配计算。若校准集包含 $|\mathcal{D}_\text{cal}|$ 个样本，在使用了\ref{sec:dp_for_inference}章节中的动态规划算法后，单次迭代的耗时大约为一次前向模型推理的($L+2$)倍。这是因为对第$i$层，要对当前队列总的所有元素进行计算，次数为$2i$，还需要计算一次$F_{l}(h_{l-1})$，$F_{l,k}(h_{l-1})$和$F_{l,v}(h_{l-1})$，即每层一共需要计算$2i+3$次单层推理。从0层到$L-1$层一共需要计算 $\sum_{i=0}^{L-1}(2i+3)=L^2+2L$，单个模型一共需要进行$L$次层前向，相除之后得到($L+2$)倍。虽然用了动态规划算法，当校准集样本数量较多时迭代过程仍然比较耗时。但我们在实验中发现使用少量样本和用更多的样本相比迭代算法重分配秩之后模型的效果没有明显差异，这是因为每层对秩减少的敏感性以及压缩该层K/V带来的误差累积时模型本身的性质，不会随着样本不同有很大差异。因此我们可以使用少量样本来作为校准集，仍能有较好的效果，我们在实验中通常选择 $|\mathcal{D}_\text{cal}|=128\sim256$。而在每轮迭代中，如寻找压缩K/V导致误差最大和最小的层等其他操作和模型前向相比时间可忽略。
@@ -194,8 +195,8 @@ $t \gets 0$； $c \gets 0$； $\{r_{k,l}, r_{v,l}\} \gets \{r_{k,l}^{(0)}, r_{v,
     $\ell_{k,\text{max}} \gets \arg\max_l L2_{l,k}$； $\ell_{k,\text{min}} \gets \arg\min_l L2_{l,k}$；\\
     $\ell_{v,\text{max}} \gets \arg\max_l L2_{l,v}$； $\ell_{v,\text{min}} \gets \arg\min_l L2_{l,v}$；
     \tcc{3. 依据敏感性自适应地设置步长并更新秩}
-    $\delta_k \gets \mathrm{clip}(\eta(\alpha_{\ell_{k,\text{max}}} + \alpha_{\ell_{k,\text{min}}}), \delta_{\min}, \delta_{\max})$；\\
-    $\delta_v \gets \mathrm{clip}(\eta(\alpha_{\ell_{v,\text{max}}} + \alpha_{\ell_{v,\text{min}}}), \delta_{\min}, \delta_{\max})$；\\
+    $\delta_k \gets \mathrm{clip}(\eta(\alpha_{\ell_{k,\text{max}}} + \alpha_{\ell_{k,\text{min}}})\cdot r_{\ell_{k,\text{min}}}, \delta_{\min}, \delta_{\max})$；\\
+    $\delta_v \gets \mathrm{clip}(\eta(\alpha_{\ell_{v,\text{max}}} + \alpha_{\ell_{v,\text{min}}})\cdot r_{\ell_{v,\text{min}}}, \delta_{\min}, \delta_{\max})$；\\
     $r_{\ell_{k,\text{max}}} \gets \min(d, r_{\ell_{k,\text{max}}} + \delta_k)$；\\
     $r_{\ell_{k,\text{min}}} \gets \max(1, r_{\ell_{k,\text{min}}} - \delta_k)$；\\
     $r_{\ell_{v,\text{max}}} \gets \min(d, r_{\ell_{v,\text{max}}} + \delta_v)$；\\
